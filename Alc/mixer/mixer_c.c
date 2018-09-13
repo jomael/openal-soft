@@ -6,6 +6,7 @@
 #include "alu.h"
 #include "alSource.h"
 #include "alAuxEffectSlot.h"
+#include "defs.h"
 
 
 static inline ALfloat do_point(const ALfloat *restrict vals, ALsizei UNUSED(frac))
@@ -64,6 +65,8 @@ const ALfloat *Resample_bsinc_C(const InterpState *state, const ALfloat *restric
     ALsizei j_f, pi, i;
     ALfloat pf, r;
 
+    ASSUME(m > 0);
+
     src += state->bsinc.l;
     for(i = 0;i < dstlen;i++)
     {
@@ -92,47 +95,6 @@ const ALfloat *Resample_bsinc_C(const InterpState *state, const ALfloat *restric
 }
 
 
-void ALfilterState_processC(ALfilterState *filter, ALfloat *restrict dst, const ALfloat *restrict src, ALsizei numsamples)
-{
-    ALsizei i;
-    if(LIKELY(numsamples > 1))
-    {
-        dst[0] = filter->b0 * src[0] +
-                 filter->b1 * filter->x[0] +
-                 filter->b2 * filter->x[1] -
-                 filter->a1 * filter->y[0] -
-                 filter->a2 * filter->y[1];
-        dst[1] = filter->b0 * src[1] +
-                 filter->b1 * src[0] +
-                 filter->b2 * filter->x[0] -
-                 filter->a1 * dst[0] -
-                 filter->a2 * filter->y[0];
-        for(i = 2;i < numsamples;i++)
-            dst[i] = filter->b0 * src[i] +
-                     filter->b1 * src[i-1] +
-                     filter->b2 * src[i-2] -
-                     filter->a1 * dst[i-1] -
-                     filter->a2 * dst[i-2];
-        filter->x[0] = src[i-1];
-        filter->x[1] = src[i-2];
-        filter->y[0] = dst[i-1];
-        filter->y[1] = dst[i-2];
-    }
-    else if(numsamples == 1)
-    {
-        dst[0] = filter->b0 * src[0] +
-                 filter->b1 * filter->x[0] +
-                 filter->b2 * filter->x[1] -
-                 filter->a1 * filter->y[0] -
-                 filter->a2 * filter->y[1];
-        filter->x[1] = filter->x[0];
-        filter->x[0] = src[0];
-        filter->y[1] = filter->y[0];
-        filter->y[0] = dst[0];
-    }
-}
-
-
 static inline void ApplyCoeffs(ALsizei Offset, ALfloat (*restrict Values)[2],
                                const ALsizei IrSize,
                                const ALfloat (*restrict Coeffs)[2],
@@ -150,8 +112,7 @@ static inline void ApplyCoeffs(ALsizei Offset, ALfloat (*restrict Values)[2],
 #define MixHrtf MixHrtf_C
 #define MixHrtfBlend MixHrtfBlend_C
 #define MixDirectHrtf MixDirectHrtf_C
-#include "mixer_inc.c"
-#undef MixHrtf
+#include "hrtf_inc.c"
 
 
 void Mix_C(const ALfloat *data, ALsizei OutChans, ALfloat (*restrict OutBuffer)[BUFFERSIZE],
@@ -161,6 +122,8 @@ void Mix_C(const ALfloat *data, ALsizei OutChans, ALfloat (*restrict OutBuffer)[
     ALfloat gain, delta, step;
     ALsizei c;
 
+    ASSUME(OutChans > 0);
+    ASSUME(BufferSize > 0);
     delta = (Counter > 0) ? 1.0f/(ALfloat)Counter : 0.0f;
 
     for(c = 0;c < OutChans;c++)
@@ -171,13 +134,16 @@ void Mix_C(const ALfloat *data, ALsizei OutChans, ALfloat (*restrict OutBuffer)[
         if(fabsf(step) > FLT_EPSILON)
         {
             ALsizei minsize = mini(BufferSize, Counter);
+            ALfloat step_count = 0.0f;
             for(;pos < minsize;pos++)
             {
-                OutBuffer[c][OutPos+pos] += data[pos]*gain;
-                gain += step;
+                OutBuffer[c][OutPos+pos] += data[pos] * (gain + step*step_count);
+                step_count += 1.0f;
             }
             if(pos == Counter)
                 gain = TargetGains[c];
+            else
+                gain += step*step_count;
             CurrentGains[c] = gain;
         }
 
@@ -197,6 +163,9 @@ void Mix_C(const ALfloat *data, ALsizei OutChans, ALfloat (*restrict OutBuffer)[
 void MixRow_C(ALfloat *OutBuffer, const ALfloat *Gains, const ALfloat (*restrict data)[BUFFERSIZE], ALsizei InChans, ALsizei InPos, ALsizei BufferSize)
 {
     ALsizei c, i;
+
+    ASSUME(InChans > 0);
+    ASSUME(BufferSize > 0);
 
     for(c = 0;c < InChans;c++)
     {

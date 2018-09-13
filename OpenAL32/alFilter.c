@@ -28,13 +28,11 @@
 #include "alError.h"
 
 
+#define FILTER_MIN_GAIN 0.0f
+#define FILTER_MAX_GAIN 4.0f /* +12dB */
+
 extern inline void LockFilterList(ALCdevice *device);
 extern inline void UnlockFilterList(ALCdevice *device);
-extern inline void ALfilterState_clear(ALfilterState *filter);
-extern inline void ALfilterState_copyParams(ALfilterState *restrict dst, const ALfilterState *restrict src);
-extern inline void ALfilterState_processPassthru(ALfilterState *filter, const ALfloat *restrict src, ALsizei numsamples);
-extern inline ALfloat calc_rcpQ_from_slope(ALfloat gain, ALfloat slope);
-extern inline ALfloat calc_rcpQ_from_bandwidth(ALfloat f0norm, ALfloat bandwidth);
 
 static ALfilter *AllocFilter(ALCcontext *context);
 static void FreeFilter(ALCdevice *device, ALfilter *filter);
@@ -154,7 +152,7 @@ AL_API ALvoid AL_APIENTRY alFilteri(ALuint filter, ALenum param, ALint value)
         else
         {
             /* Call the appropriate handler */
-            V(ALFilter,setParami)(Context, param, value);
+            ALfilter_setParami(ALFilter, Context, param, value);
         }
     }
     UnlockFilterList(Device);
@@ -185,7 +183,7 @@ AL_API ALvoid AL_APIENTRY alFilteriv(ALuint filter, ALenum param, const ALint *v
     else
     {
         /* Call the appropriate handler */
-        V(ALFilter,setParamiv)(Context, param, values);
+        ALfilter_setParamiv(ALFilter, Context, param, values);
     }
     UnlockFilterList(Device);
 
@@ -208,7 +206,7 @@ AL_API ALvoid AL_APIENTRY alFilterf(ALuint filter, ALenum param, ALfloat value)
     else
     {
         /* Call the appropriate handler */
-        V(ALFilter,setParamf)(Context, param, value);
+        ALfilter_setParamf(ALFilter, Context, param, value);
     }
     UnlockFilterList(Device);
 
@@ -231,7 +229,7 @@ AL_API ALvoid AL_APIENTRY alFilterfv(ALuint filter, ALenum param, const ALfloat 
     else
     {
         /* Call the appropriate handler */
-        V(ALFilter,setParamfv)(Context, param, values);
+        ALfilter_setParamfv(ALFilter, Context, param, values);
     }
     UnlockFilterList(Device);
 
@@ -258,7 +256,7 @@ AL_API ALvoid AL_APIENTRY alGetFilteri(ALuint filter, ALenum param, ALint *value
         else
         {
             /* Call the appropriate handler */
-            V(ALFilter,getParami)(Context, param, value);
+            ALfilter_getParami(ALFilter, Context, param, value);
         }
     }
     UnlockFilterList(Device);
@@ -289,7 +287,7 @@ AL_API ALvoid AL_APIENTRY alGetFilteriv(ALuint filter, ALenum param, ALint *valu
     else
     {
         /* Call the appropriate handler */
-        V(ALFilter,getParamiv)(Context, param, values);
+        ALfilter_getParamiv(ALFilter, Context, param, values);
     }
     UnlockFilterList(Device);
 
@@ -312,7 +310,7 @@ AL_API ALvoid AL_APIENTRY alGetFilterf(ALuint filter, ALenum param, ALfloat *val
     else
     {
         /* Call the appropriate handler */
-        V(ALFilter,getParamf)(Context, param, value);
+        ALfilter_getParamf(ALFilter, Context, param, value);
     }
     UnlockFilterList(Device);
 
@@ -335,91 +333,11 @@ AL_API ALvoid AL_APIENTRY alGetFilterfv(ALuint filter, ALenum param, ALfloat *va
     else
     {
         /* Call the appropriate handler */
-        V(ALFilter,getParamfv)(Context, param, values);
+        ALfilter_getParamfv(ALFilter, Context, param, values);
     }
     UnlockFilterList(Device);
 
     ALCcontext_DecRef(Context);
-}
-
-
-void ALfilterState_setParams(ALfilterState *filter, ALfilterType type, ALfloat gain, ALfloat f0norm, ALfloat rcpQ)
-{
-    ALfloat alpha, sqrtgain_alpha_2;
-    ALfloat w0, sin_w0, cos_w0;
-    ALfloat a[3] = { 1.0f, 0.0f, 0.0f };
-    ALfloat b[3] = { 1.0f, 0.0f, 0.0f };
-
-    // Limit gain to -100dB
-    assert(gain > 0.00001f);
-
-    w0 = F_TAU * f0norm;
-    sin_w0 = sinf(w0);
-    cos_w0 = cosf(w0);
-    alpha = sin_w0/2.0f * rcpQ;
-
-    /* Calculate filter coefficients depending on filter type */
-    switch(type)
-    {
-        case ALfilterType_HighShelf:
-            sqrtgain_alpha_2 = 2.0f * sqrtf(gain) * alpha;
-            b[0] =       gain*((gain+1.0f) + (gain-1.0f)*cos_w0 + sqrtgain_alpha_2);
-            b[1] = -2.0f*gain*((gain-1.0f) + (gain+1.0f)*cos_w0                   );
-            b[2] =       gain*((gain+1.0f) + (gain-1.0f)*cos_w0 - sqrtgain_alpha_2);
-            a[0] =             (gain+1.0f) - (gain-1.0f)*cos_w0 + sqrtgain_alpha_2;
-            a[1] =  2.0f*     ((gain-1.0f) - (gain+1.0f)*cos_w0                   );
-            a[2] =             (gain+1.0f) - (gain-1.0f)*cos_w0 - sqrtgain_alpha_2;
-            break;
-        case ALfilterType_LowShelf:
-            sqrtgain_alpha_2 = 2.0f * sqrtf(gain) * alpha;
-            b[0] =       gain*((gain+1.0f) - (gain-1.0f)*cos_w0 + sqrtgain_alpha_2);
-            b[1] =  2.0f*gain*((gain-1.0f) - (gain+1.0f)*cos_w0                   );
-            b[2] =       gain*((gain+1.0f) - (gain-1.0f)*cos_w0 - sqrtgain_alpha_2);
-            a[0] =             (gain+1.0f) + (gain-1.0f)*cos_w0 + sqrtgain_alpha_2;
-            a[1] = -2.0f*     ((gain-1.0f) + (gain+1.0f)*cos_w0                   );
-            a[2] =             (gain+1.0f) + (gain-1.0f)*cos_w0 - sqrtgain_alpha_2;
-            break;
-        case ALfilterType_Peaking:
-            gain = sqrtf(gain);
-            b[0] =  1.0f + alpha * gain;
-            b[1] = -2.0f * cos_w0;
-            b[2] =  1.0f - alpha * gain;
-            a[0] =  1.0f + alpha / gain;
-            a[1] = -2.0f * cos_w0;
-            a[2] =  1.0f - alpha / gain;
-            break;
-
-        case ALfilterType_LowPass:
-            b[0] = (1.0f - cos_w0) / 2.0f;
-            b[1] =  1.0f - cos_w0;
-            b[2] = (1.0f - cos_w0) / 2.0f;
-            a[0] =  1.0f + alpha;
-            a[1] = -2.0f * cos_w0;
-            a[2] =  1.0f - alpha;
-            break;
-        case ALfilterType_HighPass:
-            b[0] =  (1.0f + cos_w0) / 2.0f;
-            b[1] = -(1.0f + cos_w0);
-            b[2] =  (1.0f + cos_w0) / 2.0f;
-            a[0] =   1.0f + alpha;
-            a[1] =  -2.0f * cos_w0;
-            a[2] =   1.0f - alpha;
-            break;
-        case ALfilterType_BandPass:
-            b[0] =  alpha;
-            b[1] =  0;
-            b[2] = -alpha;
-            a[0] =  1.0f + alpha;
-            a[1] = -2.0f * cos_w0;
-            a[2] =  1.0f - alpha;
-            break;
-    }
-
-    filter->a1 = a[1] / a[0];
-    filter->a2 = a[2] / a[0];
-    filter->b0 = b[0] / a[0];
-    filter->b1 = b[1] / a[0];
-    filter->b2 = b[2] / a[0];
 }
 
 
@@ -432,7 +350,7 @@ static void ALlowpass_setParamf(ALfilter *filter, ALCcontext *context, ALenum pa
     switch(param)
     {
         case AL_LOWPASS_GAIN:
-            if(!(val >= AL_LOWPASS_MIN_GAIN && val <= AL_LOWPASS_MAX_GAIN))
+            if(!(val >= FILTER_MIN_GAIN && val <= FILTER_MAX_GAIN))
                 SETERR_RETURN(context, AL_INVALID_VALUE,, "Low-pass gain %f out of range", val);
             filter->Gain = val;
             break;
@@ -485,7 +403,7 @@ static void ALhighpass_setParamf(ALfilter *filter, ALCcontext *context, ALenum p
     switch(param)
     {
         case AL_HIGHPASS_GAIN:
-            if(!(val >= AL_HIGHPASS_MIN_GAIN && val <= AL_HIGHPASS_MAX_GAIN))
+            if(!(val >= FILTER_MIN_GAIN && val <= FILTER_MAX_GAIN))
                 SETERR_RETURN(context, AL_INVALID_VALUE,, "High-pass gain out of range");
             filter->Gain = val;
             break;
@@ -538,7 +456,7 @@ static void ALbandpass_setParamf(ALfilter *filter, ALCcontext *context, ALenum p
     switch(param)
     {
         case AL_BANDPASS_GAIN:
-            if(!(val >= AL_BANDPASS_MIN_GAIN && val <= AL_BANDPASS_MAX_GAIN))
+            if(!(val >= FILTER_MIN_GAIN && val <= FILTER_MAX_GAIN))
                 SETERR_RETURN(context, AL_INVALID_VALUE,, "Band-pass gain out of range");
             filter->Gain = val;
             break;
@@ -720,7 +638,7 @@ static void InitFilterParams(ALfilter *filter, ALenum type)
         filter->HFReference = LOWPASSFREQREF;
         filter->GainLF = 1.0f;
         filter->LFReference = HIGHPASSFREQREF;
-        filter->vtbl = &ALlowpass_vtable;
+        filter->vtab = &ALlowpass_vtable;
     }
     else if(type == AL_FILTER_HIGHPASS)
     {
@@ -729,7 +647,7 @@ static void InitFilterParams(ALfilter *filter, ALenum type)
         filter->HFReference = LOWPASSFREQREF;
         filter->GainLF = AL_HIGHPASS_DEFAULT_GAINLF;
         filter->LFReference = HIGHPASSFREQREF;
-        filter->vtbl = &ALhighpass_vtable;
+        filter->vtab = &ALhighpass_vtable;
     }
     else if(type == AL_FILTER_BANDPASS)
     {
@@ -738,7 +656,7 @@ static void InitFilterParams(ALfilter *filter, ALenum type)
         filter->HFReference = LOWPASSFREQREF;
         filter->GainLF = AL_BANDPASS_DEFAULT_GAINLF;
         filter->LFReference = HIGHPASSFREQREF;
-        filter->vtbl = &ALbandpass_vtable;
+        filter->vtab = &ALbandpass_vtable;
     }
     else
     {
@@ -747,7 +665,7 @@ static void InitFilterParams(ALfilter *filter, ALenum type)
         filter->HFReference = LOWPASSFREQREF;
         filter->GainLF = 1.0f;
         filter->LFReference = HIGHPASSFREQREF;
-        filter->vtbl = &ALnullfilter_vtable;
+        filter->vtab = &ALnullfilter_vtable;
     }
     filter->type = type;
 }

@@ -24,10 +24,10 @@
 #include <stdlib.h>
 
 #include "alMain.h"
-#include "alFilter.h"
 #include "alAuxEffectSlot.h"
 #include "alError.h"
 #include "alu.h"
+#include "filters/defs.h"
 
 
 typedef struct ALdistortionState {
@@ -37,8 +37,8 @@ typedef struct ALdistortionState {
     ALfloat Gain[MAX_OUTPUT_CHANNELS];
 
     /* Effect parameters */
-    ALfilterState lowpass;
-    ALfilterState bandpass;
+    BiquadFilter lowpass;
+    BiquadFilter bandpass;
     ALfloat attenuation;
     ALfloat edge_coeff;
 
@@ -58,9 +58,6 @@ static void ALdistortionState_Construct(ALdistortionState *state)
 {
     ALeffectState_Construct(STATIC_CAST(ALeffectState, state));
     SET_VTABLE2(ALdistortionState, ALeffectState, state);
-
-    ALfilterState_clear(&state->lowpass);
-    ALfilterState_clear(&state->bandpass);
 }
 
 static ALvoid ALdistortionState_Destruct(ALdistortionState *state)
@@ -68,8 +65,10 @@ static ALvoid ALdistortionState_Destruct(ALdistortionState *state)
     ALeffectState_Destruct(STATIC_CAST(ALeffectState,state));
 }
 
-static ALboolean ALdistortionState_deviceUpdate(ALdistortionState *UNUSED(state), ALCdevice *UNUSED(device))
+static ALboolean ALdistortionState_deviceUpdate(ALdistortionState *state, ALCdevice *UNUSED(device))
 {
+    BiquadFilter_clear(&state->lowpass);
+    BiquadFilter_clear(&state->bandpass);
     return AL_TRUE;
 }
 
@@ -77,6 +76,7 @@ static ALvoid ALdistortionState_update(ALdistortionState *state, const ALCcontex
 {
     const ALCdevice *device = context->Device;
     ALfloat frequency = (ALfloat)device->Frequency;
+    ALfloat coeffs[MAX_AMBI_COEFFS];
     ALfloat bandwidth;
     ALfloat cutoff;
     ALfloat edge;
@@ -92,18 +92,20 @@ static ALvoid ALdistortionState_update(ALdistortionState *state, const ALCcontex
     /* Multiply sampling frequency by the amount of oversampling done during
      * processing.
      */
-    ALfilterState_setParams(&state->lowpass, ALfilterType_LowPass, 1.0f,
+    BiquadFilter_setParams(&state->lowpass, BiquadType_LowPass, 1.0f,
         cutoff / (frequency*4.0f), calc_rcpQ_from_bandwidth(cutoff / (frequency*4.0f), bandwidth)
     );
 
     cutoff = props->Distortion.EQCenter;
     /* Convert bandwidth in Hz to octaves. */
     bandwidth = props->Distortion.EQBandwidth / (cutoff * 0.67f);
-    ALfilterState_setParams(&state->bandpass, ALfilterType_BandPass, 1.0f,
+    BiquadFilter_setParams(&state->bandpass, BiquadType_BandPass, 1.0f,
         cutoff / (frequency*4.0f), calc_rcpQ_from_bandwidth(cutoff / (frequency*4.0f), bandwidth)
     );
 
-    ComputeAmbientGains(&device->Dry, slot->Params.Gain * props->Distortion.Gain, state->Gain);
+    CalcAngleCoeffs(0.0f, 0.0f, 0.0f, coeffs);
+    ComputeDryPanGains(&device->Dry, coeffs, slot->Params.Gain * props->Distortion.Gain,
+                       state->Gain);
 }
 
 static ALvoid ALdistortionState_process(ALdistortionState *state, ALsizei SamplesToDo, const ALfloat (*restrict SamplesIn)[BUFFERSIZE], ALfloat (*restrict SamplesOut)[BUFFERSIZE], ALsizei NumChannels)
@@ -133,7 +135,7 @@ static ALvoid ALdistortionState_process(ALdistortionState *state, ALsizei Sample
          * (which is fortunately first step of distortion). So combine three
          * operations into the one.
          */
-        ALfilterState_process(&state->lowpass, buffer[1], buffer[0], todo);
+        BiquadFilter_process(&state->lowpass, buffer[1], buffer[0], todo);
 
         /* Second step, do distortion using waveshaper function to emulate
          * signal processing during tube overdriving. Three steps of
@@ -152,7 +154,7 @@ static ALvoid ALdistortionState_process(ALdistortionState *state, ALsizei Sample
         }
 
         /* Third step, do bandpass filtering of distorted signal. */
-        ALfilterState_process(&state->bandpass, buffer[1], buffer[0], todo);
+        BiquadFilter_process(&state->bandpass, buffer[1], buffer[0], todo);
 
         todo >>= 2;
         for(k = 0;k < NumChannels;k++)
@@ -173,11 +175,11 @@ static ALvoid ALdistortionState_process(ALdistortionState *state, ALsizei Sample
 }
 
 
-typedef struct ALdistortionStateFactory {
-    DERIVE_FROM_TYPE(ALeffectStateFactory);
-} ALdistortionStateFactory;
+typedef struct DistortionStateFactory {
+    DERIVE_FROM_TYPE(EffectStateFactory);
+} DistortionStateFactory;
 
-static ALeffectState *ALdistortionStateFactory_create(ALdistortionStateFactory *UNUSED(factory))
+static ALeffectState *DistortionStateFactory_create(DistortionStateFactory *UNUSED(factory))
 {
     ALdistortionState *state;
 
@@ -187,14 +189,14 @@ static ALeffectState *ALdistortionStateFactory_create(ALdistortionStateFactory *
     return STATIC_CAST(ALeffectState, state);
 }
 
-DEFINE_ALEFFECTSTATEFACTORY_VTABLE(ALdistortionStateFactory);
+DEFINE_EFFECTSTATEFACTORY_VTABLE(DistortionStateFactory);
 
 
-ALeffectStateFactory *ALdistortionStateFactory_getFactory(void)
+EffectStateFactory *DistortionStateFactory_getFactory(void)
 {
-    static ALdistortionStateFactory DistortionFactory = { { GET_VTABLE2(ALdistortionStateFactory, ALeffectStateFactory) } };
+    static DistortionStateFactory DistortionFactory = { { GET_VTABLE2(DistortionStateFactory, EffectStateFactory) } };
 
-    return STATIC_CAST(ALeffectStateFactory, &DistortionFactory);
+    return STATIC_CAST(EffectStateFactory, &DistortionFactory);
 }
 
 

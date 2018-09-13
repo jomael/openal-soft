@@ -12,13 +12,16 @@ struct ALeffect;
 enum {
     EAXREVERB_EFFECT = 0,
     REVERB_EFFECT,
+    AUTOWAH_EFFECT,
     CHORUS_EFFECT,
     COMPRESSOR_EFFECT,
     DISTORTION_EFFECT,
     ECHO_EFFECT,
     EQUALIZER_EFFECT,
     FLANGER_EFFECT,
+    FSHIFTER_EFFECT,
     MODULATOR_EFFECT,
+    PSHIFTER_EFFECT,
     DEDICATED_EFFECT,
 
     MAX_EFFECTS
@@ -32,7 +35,7 @@ struct EffectList {
     int type;
     ALenum val;
 };
-#define EFFECTLIST_SIZE 11
+#define EFFECTLIST_SIZE 14
 extern const struct EffectList EffectList[EFFECTLIST_SIZE];
 
 
@@ -58,14 +61,17 @@ const struct ALeffectVtable T##_vtable = {  \
 
 extern const struct ALeffectVtable ALeaxreverb_vtable;
 extern const struct ALeffectVtable ALreverb_vtable;
+extern const struct ALeffectVtable ALautowah_vtable;
 extern const struct ALeffectVtable ALchorus_vtable;
 extern const struct ALeffectVtable ALcompressor_vtable;
 extern const struct ALeffectVtable ALdistortion_vtable;
 extern const struct ALeffectVtable ALecho_vtable;
 extern const struct ALeffectVtable ALequalizer_vtable;
 extern const struct ALeffectVtable ALflanger_vtable;
+extern const struct ALeffectVtable ALfshifter_vtable;
 extern const struct ALeffectVtable ALmodulator_vtable;
 extern const struct ALeffectVtable ALnull_vtable;
+extern const struct ALeffectVtable ALpshifter_vtable;
 extern const struct ALeffectVtable ALdedicated_vtable;
 
 
@@ -98,6 +104,13 @@ typedef union ALeffectProps {
         ALfloat HFReference;
         ALfloat LFReference;
     } Reverb;
+
+    struct {
+        ALfloat AttackTime;
+        ALfloat ReleaseTime;
+        ALfloat Resonance;
+        ALfloat PeakGain;
+    } Autowah;
 
     struct {
         ALint Waveform;
@@ -145,9 +158,20 @@ typedef union ALeffectProps {
 
     struct {
         ALfloat Frequency;
+        ALint LeftDirection;
+        ALint RightDirection;
+    } Fshifter;
+
+    struct {
+        ALfloat Frequency;
         ALfloat HighPassCutoff;
         ALint Waveform;
     } Modulator;
+
+    struct {
+        ALint CoarseTune;
+        ALint FineTune;
+    } Pshifter;
 
     struct {
         ALfloat Gain;
@@ -160,11 +184,19 @@ typedef struct ALeffect {
 
     ALeffectProps Props;
 
-    const struct ALeffectVtable *vtbl;
+    const struct ALeffectVtable *vtab;
 
     /* Self ID */
     ALuint id;
 } ALeffect;
+#define ALeffect_setParami(o, c, p, v)   ((o)->vtab->setParami(o, c, p, v))
+#define ALeffect_setParamf(o, c, p, v)   ((o)->vtab->setParamf(o, c, p, v))
+#define ALeffect_setParamiv(o, c, p, v)  ((o)->vtab->setParamiv(o, c, p, v))
+#define ALeffect_setParamfv(o, c, p, v)  ((o)->vtab->setParamfv(o, c, p, v))
+#define ALeffect_getParami(o, c, p, v)   ((o)->vtab->getParami(o, c, p, v))
+#define ALeffect_getParamf(o, c, p, v)   ((o)->vtab->getParamf(o, c, p, v))
+#define ALeffect_getParamiv(o, c, p, v)  ((o)->vtab->getParamiv(o, c, p, v))
+#define ALeffect_getParamfv(o, c, p, v)  ((o)->vtab->getParamfv(o, c, p, v))
 
 inline ALboolean IsReverbEffect(ALenum type)
 { return type == AL_EFFECT_REVERB || type == AL_EFFECT_EAXREVERB; }

@@ -23,6 +23,9 @@
 /* Define if we have the _aligned_malloc function */
 #cmakedefine HAVE__ALIGNED_MALLOC
 
+/* Define if we have the proc_pidpath function */
+#cmakedefine HAVE_PROC_PIDPATH
+
 /* Define if we have the getopt function */
 #cmakedefine HAVE_GETOPT
 
@@ -50,8 +53,8 @@
 /* Define if we have the QSA backend */
 #cmakedefine HAVE_QSA
 
-/* Define if we have the MMDevApi backend */
-#cmakedefine HAVE_MMDEVAPI
+/* Define if we have the WASAPI backend */
+#cmakedefine HAVE_WASAPI
 
 /* Define if we have the DSound backend */
 #cmakedefine HAVE_DSOUND
@@ -77,6 +80,9 @@
 /* Define if we have the Wave Writer backend */
 #cmakedefine HAVE_WAVE
 
+/* Define if we have the SDL2 backend */
+#cmakedefine HAVE_SDL2
+
 /* Define if we have the stat function */
 #cmakedefine HAVE_STAT
 
@@ -91,6 +97,9 @@
 
 /* Define if we have the cbrtf function */
 #cmakedefine HAVE_CBRTF
+
+/* Define if we have the copysignf function */
+#cmakedefine HAVE_COPYSIGNF
 
 /* Define if we have the strtof function */
 #cmakedefine HAVE_STRTOF

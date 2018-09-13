@@ -20,6 +20,7 @@ struct ALsource;
 
 typedef struct ALbufferlistitem {
     ATOMIC(struct ALbufferlistitem*) next;
+    ALsizei max_samples;
     ALsizei num_buffers;
     struct ALbuffer *buffers[];
 } ALbufferlistitem;
@@ -92,7 +93,7 @@ typedef struct ALsource {
     ALint SourceType;
 
     /** Source state (initial, playing, paused, or stopped) */
-    ATOMIC(ALenum) state;
+    ALenum state;
 
     /** Source Buffer Queue head. */
     ALbufferlistitem *queue;

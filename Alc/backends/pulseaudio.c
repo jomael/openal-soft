@@ -833,6 +833,9 @@ static int ALCpulsePlayback_mixerProc(void *ptr)
     while(!ATOMIC_LOAD(&self->killNow, almemory_order_acquire) &&
           ATOMIC_LOAD(&device->Connected, almemory_order_acquire))
     {
+        void *buf;
+        int ret;
+
         len = pa_stream_writable_size(self->stream);
         if(len < 0)
         {
@@ -863,33 +866,16 @@ static int ALCpulsePlayback_mixerProc(void *ptr)
             pa_threaded_mainloop_wait(self->loop);
             continue;
         }
+
         len -= len%self->attr.minreq;
+        len -= len%frame_size;
 
-        while(len > 0)
-        {
-            size_t newlen = len;
-            int ret;
-            void *buf;
-            pa_free_cb_t free_func = NULL;
+        buf = pa_xmalloc(len);
 
-            if(pa_stream_begin_write(self->stream, &buf, &newlen) < 0)
-            {
-                buf = pa_xmalloc(newlen);
-                free_func = pa_xfree;
-            }
+        aluMixData(device, buf, len/frame_size);
 
-            newlen /= frame_size;
-            aluMixData(device, buf, newlen);
-
-            newlen *= frame_size;
-            ret = pa_stream_write(self->stream, buf, newlen, free_func, 0, PA_SEEK_RELATIVE);
-            if(ret != PA_OK)
-            {
-                ERR("Failed to write to stream: %d, %s\n", ret, pa_strerror(ret));
-                break;
-            }
-            len -= newlen;
-        }
+        ret = pa_stream_write(self->stream, buf, len, pa_xfree, 0, PA_SEEK_RELATIVE);
+        if(ret != PA_OK) ERR("Failed to write to stream: %d, %s\n", ret, pa_strerror(ret));
     }
     pa_threaded_mainloop_unlock(self->loop);
 
@@ -1178,13 +1164,16 @@ static void ALCpulsePlayback_stop(ALCpulsePlayback *self)
 
 static ClockLatency ALCpulsePlayback_getClockLatency(ALCpulsePlayback *self)
 {
-    pa_usec_t latency = 0;
     ClockLatency ret;
+    pa_usec_t latency;
     int neg, err;
 
     pa_threaded_mainloop_lock(self->loop);
     ret.ClockTime = GetDeviceClockTime(STATIC_CAST(ALCbackend,self)->mDevice);
-    if((err=pa_stream_get_latency(self->stream, &latency, &neg)) != 0)
+    err = pa_stream_get_latency(self->stream, &latency, &neg);
+    pa_threaded_mainloop_unlock(self->loop);
+
+    if(UNLIKELY(err != 0))
     {
         /* FIXME: if err = -PA_ERR_NODATA, it means we were called too soon
          * after starting the stream and no timing info has been received from
@@ -1195,9 +1184,9 @@ static ClockLatency ALCpulsePlayback_getClockLatency(ALCpulsePlayback *self)
         latency = 0;
         neg = 0;
     }
-    if(neg) latency = 0;
-    ret.Latency = minu64(latency, U64(0xffffffffffffffff)/1000) * 1000;
-    pa_threaded_mainloop_unlock(self->loop);
+    else if(UNLIKELY(neg))
+        latency = 0;
+    ret.Latency = (ALint64)minu64(latency, U64(0x7fffffffffffffff)/1000) * 1000;
 
     return ret;
 }
@@ -1729,21 +1718,24 @@ static ALCuint ALCpulseCapture_availableSamples(ALCpulseCapture *self)
 
 static ClockLatency ALCpulseCapture_getClockLatency(ALCpulseCapture *self)
 {
-    pa_usec_t latency = 0;
     ClockLatency ret;
+    pa_usec_t latency;
     int neg, err;
 
     pa_threaded_mainloop_lock(self->loop);
     ret.ClockTime = GetDeviceClockTime(STATIC_CAST(ALCbackend,self)->mDevice);
-    if((err=pa_stream_get_latency(self->stream, &latency, &neg)) != 0)
+    err = pa_stream_get_latency(self->stream, &latency, &neg);
+    pa_threaded_mainloop_unlock(self->loop);
+
+    if(UNLIKELY(err != 0))
     {
         ERR("Failed to get stream latency: 0x%x\n", err);
         latency = 0;
         neg = 0;
     }
-    if(neg) latency = 0;
-    ret.Latency = minu64(latency, U64(0xffffffffffffffff)/1000) * 1000;
-    pa_threaded_mainloop_unlock(self->loop);
+    else if(UNLIKELY(neg))
+        latency = 0;
+    ret.Latency = (ALint64)minu64(latency, U64(0x7fffffffffffffff)/1000) * 1000;
 
     return ret;
 }
@@ -1768,9 +1760,8 @@ typedef struct ALCpulseBackendFactory {
 static ALCboolean ALCpulseBackendFactory_init(ALCpulseBackendFactory *self);
 static void ALCpulseBackendFactory_deinit(ALCpulseBackendFactory *self);
 static ALCboolean ALCpulseBackendFactory_querySupport(ALCpulseBackendFactory *self, ALCbackend_Type type);
-static void ALCpulseBackendFactory_probe(ALCpulseBackendFactory *self, enum DevProbe type);
+static void ALCpulseBackendFactory_probe(ALCpulseBackendFactory *self, enum DevProbe type, al_string *outnames);
 static ALCbackend* ALCpulseBackendFactory_createBackend(ALCpulseBackendFactory *self, ALCdevice *device, ALCbackend_Type type);
-
 DEFINE_ALCBACKENDFACTORY_VTABLE(ALCpulseBackendFactory);
 
 
@@ -1843,23 +1834,25 @@ static ALCboolean ALCpulseBackendFactory_querySupport(ALCpulseBackendFactory* UN
     return ALC_FALSE;
 }
 
-static void ALCpulseBackendFactory_probe(ALCpulseBackendFactory* UNUSED(self), enum DevProbe type)
+static void ALCpulseBackendFactory_probe(ALCpulseBackendFactory* UNUSED(self), enum DevProbe type, al_string *outnames)
 {
     switch(type)
     {
+#define APPEND_OUTNAME(e) do {                                                \
+    if(!alstr_empty((e)->name))                                               \
+        alstr_append_range(outnames, VECTOR_BEGIN((e)->name),                 \
+                           VECTOR_END((e)->name)+1);                          \
+} while(0)
         case ALL_DEVICE_PROBE:
             ALCpulsePlayback_probeDevices();
-#define APPEND_ALL_DEVICES_LIST(e)  AppendAllDevicesList(alstr_get_cstr((e)->name))
-            VECTOR_FOR_EACH(const DevMap, PlaybackDevices, APPEND_ALL_DEVICES_LIST);
-#undef APPEND_ALL_DEVICES_LIST
+            VECTOR_FOR_EACH(const DevMap, PlaybackDevices, APPEND_OUTNAME);
             break;
 
         case CAPTURE_DEVICE_PROBE:
             ALCpulseCapture_probeDevices();
-#define APPEND_CAPTURE_DEVICE_LIST(e) AppendCaptureDeviceList(alstr_get_cstr((e)->name))
-            VECTOR_FOR_EACH(const DevMap, CaptureDevices, APPEND_CAPTURE_DEVICE_LIST);
-#undef APPEND_CAPTURE_DEVICE_LIST
+            VECTOR_FOR_EACH(const DevMap, CaptureDevices, APPEND_OUTNAME);
             break;
+#undef APPEND_OUTNAME
     }
 }
 
@@ -1907,7 +1900,7 @@ static ALCboolean ALCpulseBackendFactory_querySupport(ALCpulseBackendFactory* UN
     return ALC_FALSE;
 }
 
-static void ALCpulseBackendFactory_probe(ALCpulseBackendFactory* UNUSED(self), enum DevProbe UNUSED(type))
+static void ALCpulseBackendFactory_probe(ALCpulseBackendFactory* UNUSED(self), enum DevProbe UNUSED(type), al_string* UNUSED(outnames))
 {
 }
 

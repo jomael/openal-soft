@@ -65,6 +65,9 @@ typedef LONG alonce_flag;
 int althrd_sleep(const struct timespec *ts, struct timespec *rem);
 void alcall_once(alonce_flag *once, void (*callback)(void));
 
+void althrd_deinit(void);
+void althrd_thread_detach(void);
+
 
 inline althrd_t althrd_current(void)
 {
@@ -216,6 +219,10 @@ inline void alcall_once(alonce_flag *once, void (*callback)(void))
     pthread_once(once, callback);
 }
 
+
+inline void althrd_deinit(void) { }
+inline void althrd_thread_detach(void) { }
+
 #endif
 
 
@@ -237,6 +244,7 @@ int alsem_init(alsem_t *sem, unsigned int initial);
 void alsem_destroy(alsem_t *sem);
 int alsem_post(alsem_t *sem);
 int alsem_wait(alsem_t *sem);
+int alsem_trywait(alsem_t *sem);
 
 int altss_create(altss_t *tss_id, altss_dtor_t callback);
 void altss_delete(altss_t tss_id);

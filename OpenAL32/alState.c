@@ -79,7 +79,7 @@ AL_API ALvoid AL_APIENTRY alEnable(ALenum capability)
     context = GetContextRef();
     if(!context) return;
 
-    WriteLock(&context->PropLock);
+    almtx_lock(&context->PropLock);
     switch(capability)
     {
     case AL_SOURCE_DISTANCE_MODEL:
@@ -90,7 +90,7 @@ AL_API ALvoid AL_APIENTRY alEnable(ALenum capability)
     default:
         alSetError(context, AL_INVALID_VALUE, "Invalid enable property 0x%04x", capability);
     }
-    WriteUnlock(&context->PropLock);
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
 }
@@ -102,7 +102,7 @@ AL_API ALvoid AL_APIENTRY alDisable(ALenum capability)
     context = GetContextRef();
     if(!context) return;
 
-    WriteLock(&context->PropLock);
+    almtx_lock(&context->PropLock);
     switch(capability)
     {
     case AL_SOURCE_DISTANCE_MODEL:
@@ -113,7 +113,7 @@ AL_API ALvoid AL_APIENTRY alDisable(ALenum capability)
     default:
         alSetError(context, AL_INVALID_VALUE, "Invalid disable property 0x%04x", capability);
     }
-    WriteUnlock(&context->PropLock);
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
 }
@@ -126,6 +126,7 @@ AL_API ALboolean AL_APIENTRY alIsEnabled(ALenum capability)
     context = GetContextRef();
     if(!context) return AL_FALSE;
 
+    almtx_lock(&context->PropLock);
     switch(capability)
     {
     case AL_SOURCE_DISTANCE_MODEL:
@@ -135,6 +136,7 @@ AL_API ALboolean AL_APIENTRY alIsEnabled(ALenum capability)
     default:
         alSetError(context, AL_INVALID_VALUE, "Invalid is enabled property 0x%04x", capability);
     }
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
     return value;
@@ -148,6 +150,7 @@ AL_API ALboolean AL_APIENTRY alGetBoolean(ALenum pname)
     context = GetContextRef();
     if(!context) return AL_FALSE;
 
+    almtx_lock(&context->PropLock);
     switch(pname)
     {
     case AL_DOPPLER_FACTOR:
@@ -192,6 +195,7 @@ AL_API ALboolean AL_APIENTRY alGetBoolean(ALenum pname)
     default:
         alSetError(context, AL_INVALID_VALUE, "Invalid boolean property 0x%04x", pname);
     }
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
     return value;
@@ -205,6 +209,7 @@ AL_API ALdouble AL_APIENTRY alGetDouble(ALenum pname)
     context = GetContextRef();
     if(!context) return 0.0;
 
+    almtx_lock(&context->PropLock);
     switch(pname)
     {
     case AL_DOPPLER_FACTOR:
@@ -243,6 +248,7 @@ AL_API ALdouble AL_APIENTRY alGetDouble(ALenum pname)
     default:
         alSetError(context, AL_INVALID_VALUE, "Invalid double property 0x%04x", pname);
     }
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
     return value;
@@ -256,6 +262,7 @@ AL_API ALfloat AL_APIENTRY alGetFloat(ALenum pname)
     context = GetContextRef();
     if(!context) return 0.0f;
 
+    almtx_lock(&context->PropLock);
     switch(pname)
     {
     case AL_DOPPLER_FACTOR:
@@ -294,6 +301,7 @@ AL_API ALfloat AL_APIENTRY alGetFloat(ALenum pname)
     default:
         alSetError(context, AL_INVALID_VALUE, "Invalid float property 0x%04x", pname);
     }
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
     return value;
@@ -307,6 +315,7 @@ AL_API ALint AL_APIENTRY alGetInteger(ALenum pname)
     context = GetContextRef();
     if(!context) return 0;
 
+    almtx_lock(&context->PropLock);
     switch(pname)
     {
     case AL_DOPPLER_FACTOR:
@@ -345,6 +354,7 @@ AL_API ALint AL_APIENTRY alGetInteger(ALenum pname)
     default:
         alSetError(context, AL_INVALID_VALUE, "Invalid integer property 0x%04x", pname);
     }
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
     return value;
@@ -358,6 +368,7 @@ AL_API ALint64SOFT AL_APIENTRY alGetInteger64SOFT(ALenum pname)
     context = GetContextRef();
     if(!context) return 0;
 
+    almtx_lock(&context->PropLock);
     switch(pname)
     {
     case AL_DOPPLER_FACTOR:
@@ -396,6 +407,7 @@ AL_API ALint64SOFT AL_APIENTRY alGetInteger64SOFT(ALenum pname)
     default:
         alSetError(context, AL_INVALID_VALUE, "Invalid integer64 property 0x%04x", pname);
     }
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
     return value;
@@ -409,6 +421,7 @@ AL_API void* AL_APIENTRY alGetPointerSOFT(ALenum pname)
     context = GetContextRef();
     if(!context) return NULL;
 
+    almtx_lock(&context->PropLock);
     switch(pname)
     {
     case AL_EVENT_CALLBACK_FUNCTION_SOFT:
@@ -422,6 +435,7 @@ AL_API void* AL_APIENTRY alGetPointerSOFT(ALenum pname)
     default:
         alSetError(context, AL_INVALID_VALUE, "Invalid pointer property 0x%04x", pname);
     }
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
     return value;
@@ -700,10 +714,10 @@ AL_API ALvoid AL_APIENTRY alDopplerFactor(ALfloat value)
         alSetError(context, AL_INVALID_VALUE, "Doppler factor %f out of range", value);
     else
     {
-        WriteLock(&context->PropLock);
+        almtx_lock(&context->PropLock);
         context->DopplerFactor = value;
         DO_UPDATEPROPS();
-        WriteUnlock(&context->PropLock);
+        almtx_unlock(&context->PropLock);
     }
 
     ALCcontext_DecRef(context);
@@ -734,10 +748,10 @@ AL_API ALvoid AL_APIENTRY alDopplerVelocity(ALfloat value)
         alSetError(context, AL_INVALID_VALUE, "Doppler velocity %f out of range", value);
     else
     {
-        WriteLock(&context->PropLock);
+        almtx_lock(&context->PropLock);
         context->DopplerVelocity = value;
         DO_UPDATEPROPS();
-        WriteUnlock(&context->PropLock);
+        almtx_unlock(&context->PropLock);
     }
 
     ALCcontext_DecRef(context);
@@ -754,10 +768,10 @@ AL_API ALvoid AL_APIENTRY alSpeedOfSound(ALfloat value)
         alSetError(context, AL_INVALID_VALUE, "Speed of sound %f out of range", value);
     else
     {
-        WriteLock(&context->PropLock);
+        almtx_lock(&context->PropLock);
         context->SpeedOfSound = value;
         DO_UPDATEPROPS();
-        WriteUnlock(&context->PropLock);
+        almtx_unlock(&context->PropLock);
     }
 
     ALCcontext_DecRef(context);
@@ -777,11 +791,11 @@ AL_API ALvoid AL_APIENTRY alDistanceModel(ALenum value)
         alSetError(context, AL_INVALID_VALUE, "Distance model 0x%04x out of range", value);
     else
     {
-        WriteLock(&context->PropLock);
+        almtx_lock(&context->PropLock);
         context->DistanceModel = value;
         if(!context->SourceDistanceModel)
             DO_UPDATEPROPS();
-        WriteUnlock(&context->PropLock);
+        almtx_unlock(&context->PropLock);
     }
 
     ALCcontext_DecRef(context);

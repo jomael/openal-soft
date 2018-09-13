@@ -38,13 +38,16 @@ extern inline ALboolean IsReverbEffect(ALenum type);
 const struct EffectList EffectList[EFFECTLIST_SIZE] = {
     { "eaxreverb",  EAXREVERB_EFFECT,  AL_EFFECT_EAXREVERB },
     { "reverb",     REVERB_EFFECT,     AL_EFFECT_REVERB },
+    { "autowah",    AUTOWAH_EFFECT,    AL_EFFECT_AUTOWAH },
     { "chorus",     CHORUS_EFFECT,     AL_EFFECT_CHORUS },
     { "compressor", COMPRESSOR_EFFECT, AL_EFFECT_COMPRESSOR },
     { "distortion", DISTORTION_EFFECT, AL_EFFECT_DISTORTION },
     { "echo",       ECHO_EFFECT,       AL_EFFECT_ECHO },
     { "equalizer",  EQUALIZER_EFFECT,  AL_EFFECT_EQUALIZER },
     { "flanger",    FLANGER_EFFECT,    AL_EFFECT_FLANGER },
+    { "fshifter",   FSHIFTER_EFFECT,   AL_EFFECT_FREQUENCY_SHIFTER },
     { "modulator",  MODULATOR_EFFECT,  AL_EFFECT_RING_MODULATOR },
+    { "pshifter",   PSHIFTER_EFFECT,   AL_EFFECT_PITCH_SHIFTER },
     { "dedicated",  DEDICATED_EFFECT,  AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT },
     { "dedicated",  DEDICATED_EFFECT,  AL_EFFECT_DEDICATED_DIALOGUE },
 };
@@ -176,7 +179,7 @@ AL_API ALvoid AL_APIENTRY alEffecti(ALuint effect, ALenum param, ALint value)
         else
         {
             /* Call the appropriate handler */
-            V(ALEffect,setParami)(Context, param, value);
+            ALeffect_setParami(ALEffect, Context, param, value);
         }
     }
     UnlockEffectList(Device);
@@ -207,7 +210,7 @@ AL_API ALvoid AL_APIENTRY alEffectiv(ALuint effect, ALenum param, const ALint *v
     else
     {
         /* Call the appropriate handler */
-        V(ALEffect,setParamiv)(Context, param, values);
+        ALeffect_setParamiv(ALEffect, Context, param, values);
     }
     UnlockEffectList(Device);
 
@@ -230,7 +233,7 @@ AL_API ALvoid AL_APIENTRY alEffectf(ALuint effect, ALenum param, ALfloat value)
     else
     {
         /* Call the appropriate handler */
-        V(ALEffect,setParamf)(Context, param, value);
+        ALeffect_setParamf(ALEffect, Context, param, value);
     }
     UnlockEffectList(Device);
 
@@ -253,7 +256,7 @@ AL_API ALvoid AL_APIENTRY alEffectfv(ALuint effect, ALenum param, const ALfloat 
     else
     {
         /* Call the appropriate handler */
-        V(ALEffect,setParamfv)(Context, param, values);
+        ALeffect_setParamfv(ALEffect, Context, param, values);
     }
     UnlockEffectList(Device);
 
@@ -280,7 +283,7 @@ AL_API ALvoid AL_APIENTRY alGetEffecti(ALuint effect, ALenum param, ALint *value
         else
         {
             /* Call the appropriate handler */
-            V(ALEffect,getParami)(Context, param, value);
+            ALeffect_getParami(ALEffect, Context, param, value);
         }
     }
     UnlockEffectList(Device);
@@ -311,7 +314,7 @@ AL_API ALvoid AL_APIENTRY alGetEffectiv(ALuint effect, ALenum param, ALint *valu
     else
     {
         /* Call the appropriate handler */
-        V(ALEffect,getParamiv)(Context, param, values);
+        ALeffect_getParamiv(ALEffect, Context, param, values);
     }
     UnlockEffectList(Device);
 
@@ -334,7 +337,7 @@ AL_API ALvoid AL_APIENTRY alGetEffectf(ALuint effect, ALenum param, ALfloat *val
     else
     {
         /* Call the appropriate handler */
-        V(ALEffect,getParamf)(Context, param, value);
+        ALeffect_getParamf(ALEffect, Context, param, value);
     }
     UnlockEffectList(Device);
 
@@ -357,7 +360,7 @@ AL_API ALvoid AL_APIENTRY alGetEffectfv(ALuint effect, ALenum param, ALfloat *va
     else
     {
         /* Call the appropriate handler */
-        V(ALEffect,getParamfv)(Context, param, values);
+        ALeffect_getParamfv(ALEffect, Context, param, values);
     }
     UnlockEffectList(Device);
 
@@ -500,7 +503,7 @@ static void InitEffectParams(ALeffect *effect, ALenum type)
         effect->Props.Reverb.LFReference = AL_EAXREVERB_DEFAULT_LFREFERENCE;
         effect->Props.Reverb.RoomRolloffFactor = AL_EAXREVERB_DEFAULT_ROOM_ROLLOFF_FACTOR;
         effect->Props.Reverb.DecayHFLimit = AL_EAXREVERB_DEFAULT_DECAY_HFLIMIT;
-        effect->vtbl = &ALeaxreverb_vtable;
+        effect->vtab = &ALeaxreverb_vtable;
         break;
     case AL_EFFECT_REVERB:
         effect->Props.Reverb.Density   = AL_REVERB_DEFAULT_DENSITY;
@@ -530,7 +533,14 @@ static void InitEffectParams(ALeffect *effect, ALenum type)
         effect->Props.Reverb.LFReference = 250.0f;
         effect->Props.Reverb.RoomRolloffFactor = AL_REVERB_DEFAULT_ROOM_ROLLOFF_FACTOR;
         effect->Props.Reverb.DecayHFLimit = AL_REVERB_DEFAULT_DECAY_HFLIMIT;
-        effect->vtbl = &ALreverb_vtable;
+        effect->vtab = &ALreverb_vtable;
+        break;
+    case AL_EFFECT_AUTOWAH:
+        effect->Props.Autowah.AttackTime = AL_AUTOWAH_DEFAULT_ATTACK_TIME;
+        effect->Props.Autowah.ReleaseTime = AL_AUTOWAH_DEFAULT_RELEASE_TIME;
+        effect->Props.Autowah.Resonance = AL_AUTOWAH_DEFAULT_RESONANCE;
+        effect->Props.Autowah.PeakGain = AL_AUTOWAH_DEFAULT_PEAK_GAIN;
+        effect->vtab = &ALautowah_vtable;
         break;
     case AL_EFFECT_CHORUS:
         effect->Props.Chorus.Waveform = AL_CHORUS_DEFAULT_WAVEFORM;
@@ -539,11 +549,11 @@ static void InitEffectParams(ALeffect *effect, ALenum type)
         effect->Props.Chorus.Depth = AL_CHORUS_DEFAULT_DEPTH;
         effect->Props.Chorus.Feedback = AL_CHORUS_DEFAULT_FEEDBACK;
         effect->Props.Chorus.Delay = AL_CHORUS_DEFAULT_DELAY;
-        effect->vtbl = &ALchorus_vtable;
+        effect->vtab = &ALchorus_vtable;
         break;
     case AL_EFFECT_COMPRESSOR:
         effect->Props.Compressor.OnOff = AL_COMPRESSOR_DEFAULT_ONOFF;
-        effect->vtbl = &ALcompressor_vtable;
+        effect->vtab = &ALcompressor_vtable;
         break;
     case AL_EFFECT_DISTORTION:
         effect->Props.Distortion.Edge = AL_DISTORTION_DEFAULT_EDGE;
@@ -551,7 +561,7 @@ static void InitEffectParams(ALeffect *effect, ALenum type)
         effect->Props.Distortion.LowpassCutoff = AL_DISTORTION_DEFAULT_LOWPASS_CUTOFF;
         effect->Props.Distortion.EQCenter = AL_DISTORTION_DEFAULT_EQCENTER;
         effect->Props.Distortion.EQBandwidth = AL_DISTORTION_DEFAULT_EQBANDWIDTH;
-        effect->vtbl = &ALdistortion_vtable;
+        effect->vtab = &ALdistortion_vtable;
         break;
     case AL_EFFECT_ECHO:
         effect->Props.Echo.Delay    = AL_ECHO_DEFAULT_DELAY;
@@ -559,7 +569,7 @@ static void InitEffectParams(ALeffect *effect, ALenum type)
         effect->Props.Echo.Damping  = AL_ECHO_DEFAULT_DAMPING;
         effect->Props.Echo.Feedback = AL_ECHO_DEFAULT_FEEDBACK;
         effect->Props.Echo.Spread   = AL_ECHO_DEFAULT_SPREAD;
-        effect->vtbl = &ALecho_vtable;
+        effect->vtab = &ALecho_vtable;
         break;
     case AL_EFFECT_EQUALIZER:
         effect->Props.Equalizer.LowCutoff = AL_EQUALIZER_DEFAULT_LOW_CUTOFF;
@@ -572,7 +582,7 @@ static void InitEffectParams(ALeffect *effect, ALenum type)
         effect->Props.Equalizer.Mid2Width = AL_EQUALIZER_DEFAULT_MID2_WIDTH;
         effect->Props.Equalizer.HighCutoff = AL_EQUALIZER_DEFAULT_HIGH_CUTOFF;
         effect->Props.Equalizer.HighGain = AL_EQUALIZER_DEFAULT_HIGH_GAIN;
-        effect->vtbl = &ALequalizer_vtable;
+        effect->vtab = &ALequalizer_vtable;
         break;
     case AL_EFFECT_FLANGER:
         effect->Props.Chorus.Waveform = AL_FLANGER_DEFAULT_WAVEFORM;
@@ -581,21 +591,32 @@ static void InitEffectParams(ALeffect *effect, ALenum type)
         effect->Props.Chorus.Depth = AL_FLANGER_DEFAULT_DEPTH;
         effect->Props.Chorus.Feedback = AL_FLANGER_DEFAULT_FEEDBACK;
         effect->Props.Chorus.Delay = AL_FLANGER_DEFAULT_DELAY;
-        effect->vtbl = &ALflanger_vtable;
+        effect->vtab = &ALflanger_vtable;
+        break;
+        case AL_EFFECT_FREQUENCY_SHIFTER:
+        effect->Props.Fshifter.Frequency      = AL_FREQUENCY_SHIFTER_DEFAULT_FREQUENCY;
+        effect->Props.Fshifter.LeftDirection  = AL_FREQUENCY_SHIFTER_DEFAULT_LEFT_DIRECTION;
+        effect->Props.Fshifter.RightDirection = AL_FREQUENCY_SHIFTER_DEFAULT_RIGHT_DIRECTION;
+        effect->vtab = &ALfshifter_vtable;
         break;
     case AL_EFFECT_RING_MODULATOR:
         effect->Props.Modulator.Frequency      = AL_RING_MODULATOR_DEFAULT_FREQUENCY;
         effect->Props.Modulator.HighPassCutoff = AL_RING_MODULATOR_DEFAULT_HIGHPASS_CUTOFF;
         effect->Props.Modulator.Waveform       = AL_RING_MODULATOR_DEFAULT_WAVEFORM;
-        effect->vtbl = &ALmodulator_vtable;
+        effect->vtab = &ALmodulator_vtable;
+        break;
+    case AL_EFFECT_PITCH_SHIFTER:
+        effect->Props.Pshifter.CoarseTune      = AL_PITCH_SHIFTER_DEFAULT_COARSE_TUNE;
+        effect->Props.Pshifter.FineTune        = AL_PITCH_SHIFTER_DEFAULT_FINE_TUNE;
+        effect->vtab = &ALpshifter_vtable;
         break;
     case AL_EFFECT_DEDICATED_LOW_FREQUENCY_EFFECT:
     case AL_EFFECT_DEDICATED_DIALOGUE:
         effect->Props.Dedicated.Gain = 1.0f;
-        effect->vtbl = &ALdedicated_vtable;
+        effect->vtab = &ALdedicated_vtable;
         break;
     default:
-        effect->vtbl = &ALnull_vtable;
+        effect->vtab = &ALnull_vtable;
         break;
     }
     effect->type = type;

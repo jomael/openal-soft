@@ -24,10 +24,10 @@
 #include <stdlib.h>
 
 #include "alMain.h"
-#include "alFilter.h"
 #include "alAuxEffectSlot.h"
 #include "alError.h"
 #include "alu.h"
+#include "filters/defs.h"
 
 
 static_assert(AL_CHORUS_WAVEFORM_SINUSOID == AL_FLANGER_WAVEFORM_SINUSOID, "Chorus/Flanger waveform value mismatch");
@@ -98,7 +98,7 @@ static ALboolean ALchorusState_deviceUpdate(ALchorusState *state, ALCdevice *Dev
     const ALfloat max_delay = maxf(AL_CHORUS_MAX_DELAY, AL_FLANGER_MAX_DELAY);
     ALsizei maxlen;
 
-    maxlen = NextPowerOf2(fastf2i(max_delay*2.0f*Device->Frequency) + 1);
+    maxlen = NextPowerOf2(float2int(max_delay*2.0f*Device->Frequency) + 1u);
     if(maxlen <= 0) return AL_FALSE;
 
     if(maxlen != state->BufferLength)
@@ -140,7 +140,7 @@ static ALvoid ALchorusState_update(ALchorusState *state, const ALCcontext *Conte
     /* The LFO depth is scaled to be relative to the sample delay. Clamp the
      * delay and depth to allow enough padding for resampling.
      */
-    state->delay = maxi(fastf2i(props->Chorus.Delay*frequency*FRACTIONONE + 0.5f),
+    state->delay = maxi(float2int(props->Chorus.Delay*frequency*FRACTIONONE + 0.5f),
                         mindelay);
     state->depth = minf(props->Chorus.Depth * state->delay,
                         (ALfloat)(state->delay - mindelay));
@@ -167,10 +167,10 @@ static ALvoid ALchorusState_update(ALchorusState *state, const ALCcontext *Conte
         /* Calculate LFO coefficient (number of samples per cycle). Limit the
          * max range to avoid overflow when calculating the displacement.
          */
-        ALsizei lfo_range = mini(fastf2i(frequency/rate + 0.5f), INT_MAX/360 - 180);
+        ALsizei lfo_range = float2int(minf(frequency/rate + 0.5f, (ALfloat)(INT_MAX/360 - 180)));
 
-        state->lfo_offset = fastf2i((ALfloat)state->lfo_offset/state->lfo_range*
-                                    lfo_range + 0.5f) % lfo_range;
+        state->lfo_offset = float2int((ALfloat)state->lfo_offset/state->lfo_range*
+                                      lfo_range + 0.5f) % lfo_range;
         state->lfo_range = lfo_range;
         switch(state->waveform)
         {
@@ -227,7 +227,7 @@ static ALvoid ALchorusState_process(ALchorusState *state, ALsizei SamplesToDo, c
     {
         const ALsizei todo = mini(256, SamplesToDo-base);
         ALint moddelays[2][256];
-        ALfloat temps[2][256];
+        alignas(16) ALfloat temps[2][256];
 
         if(state->waveform == WF_Sinusoid)
         {
@@ -285,11 +285,11 @@ static ALvoid ALchorusState_process(ALchorusState *state, ALsizei SamplesToDo, c
 }
 
 
-typedef struct ALchorusStateFactory {
-    DERIVE_FROM_TYPE(ALeffectStateFactory);
-} ALchorusStateFactory;
+typedef struct ChorusStateFactory {
+    DERIVE_FROM_TYPE(EffectStateFactory);
+} ChorusStateFactory;
 
-static ALeffectState *ALchorusStateFactory_create(ALchorusStateFactory *UNUSED(factory))
+static ALeffectState *ChorusStateFactory_create(ChorusStateFactory *UNUSED(factory))
 {
     ALchorusState *state;
 
@@ -299,14 +299,14 @@ static ALeffectState *ALchorusStateFactory_create(ALchorusStateFactory *UNUSED(f
     return STATIC_CAST(ALeffectState, state);
 }
 
-DEFINE_ALEFFECTSTATEFACTORY_VTABLE(ALchorusStateFactory);
+DEFINE_EFFECTSTATEFACTORY_VTABLE(ChorusStateFactory);
 
 
-ALeffectStateFactory *ALchorusStateFactory_getFactory(void)
+EffectStateFactory *ChorusStateFactory_getFactory(void)
 {
-    static ALchorusStateFactory ChorusFactory = { { GET_VTABLE2(ALchorusStateFactory, ALeffectStateFactory) } };
+    static ChorusStateFactory ChorusFactory = { { GET_VTABLE2(ChorusStateFactory, EffectStateFactory) } };
 
-    return STATIC_CAST(ALeffectStateFactory, &ChorusFactory);
+    return STATIC_CAST(EffectStateFactory, &ChorusFactory);
 }
 
 
@@ -422,11 +422,11 @@ DEFINE_ALEFFECT_VTABLE(ALchorus);
 /* Flanger is basically a chorus with a really short delay. They can both use
  * the same processing functions, so piggyback flanger on the chorus functions.
  */
-typedef struct ALflangerStateFactory {
-    DERIVE_FROM_TYPE(ALeffectStateFactory);
-} ALflangerStateFactory;
+typedef struct FlangerStateFactory {
+    DERIVE_FROM_TYPE(EffectStateFactory);
+} FlangerStateFactory;
 
-ALeffectState *ALflangerStateFactory_create(ALflangerStateFactory *UNUSED(factory))
+ALeffectState *FlangerStateFactory_create(FlangerStateFactory *UNUSED(factory))
 {
     ALchorusState *state;
 
@@ -436,13 +436,13 @@ ALeffectState *ALflangerStateFactory_create(ALflangerStateFactory *UNUSED(factor
     return STATIC_CAST(ALeffectState, state);
 }
 
-DEFINE_ALEFFECTSTATEFACTORY_VTABLE(ALflangerStateFactory);
+DEFINE_EFFECTSTATEFACTORY_VTABLE(FlangerStateFactory);
 
-ALeffectStateFactory *ALflangerStateFactory_getFactory(void)
+EffectStateFactory *FlangerStateFactory_getFactory(void)
 {
-    static ALflangerStateFactory FlangerFactory = { { GET_VTABLE2(ALflangerStateFactory, ALeffectStateFactory) } };
+    static FlangerStateFactory FlangerFactory = { { GET_VTABLE2(FlangerStateFactory, EffectStateFactory) } };
 
-    return STATIC_CAST(ALeffectStateFactory, &FlangerFactory);
+    return STATIC_CAST(EffectStateFactory, &FlangerFactory);
 }
 
 

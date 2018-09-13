@@ -13,18 +13,23 @@ static int EventThread(void *arg)
 {
     ALCcontext *context = arg;
 
+    /* Clear all pending posts on the semaphore. */
+    while(alsem_trywait(&context->EventSem) == althrd_success)
+    {
+    }
+
     while(1)
     {
-        AsyncEvent evt;
         ALbitfieldSOFT enabledevts;
+        AsyncEvent evt;
 
-        if(ll_ringbuffer_read_space(context->AsyncEvents) == 0)
+        if(ll_ringbuffer_read(context->AsyncEvents, (char*)&evt, 1) == 0)
         {
             alsem_wait(&context->EventSem);
             continue;
         }
-        ll_ringbuffer_read(context->AsyncEvents, (char*)&evt, 1);
-        if(!evt.EnumType) break;
+        if(!evt.EnumType)
+            break;
 
         almtx_lock(&context->EventCbLock);
         enabledevts = ATOMIC_LOAD(&context->EnabledEvts, almemory_order_acquire);
@@ -39,7 +44,9 @@ static int EventThread(void *arg)
 AL_API void AL_APIENTRY alEventControlSOFT(ALsizei count, const ALenum *types, ALboolean enable)
 {
     ALCcontext *context;
+    ALbitfieldSOFT enabledevts;
     ALbitfieldSOFT flags = 0;
+    bool isrunning;
     ALsizei i;
 
     context = GetContextRef();
@@ -67,13 +74,11 @@ AL_API void AL_APIENTRY alEventControlSOFT(ALsizei count, const ALenum *types, A
             SETERR_GOTO(context, AL_INVALID_ENUM, done, "Invalid event type 0x%04x", types[i]);
     }
 
+    almtx_lock(&context->EventThrdLock);
     if(enable)
     {
-        ALbitfieldSOFT enabledevts;
-        bool isrunning;
-        almtx_lock(&context->EventThrdLock);
         if(!context->AsyncEvents)
-            context->AsyncEvents = ll_ringbuffer_create(64, sizeof(AsyncEvent));
+            context->AsyncEvents = ll_ringbuffer_create(63, sizeof(AsyncEvent), false);
         enabledevts = ATOMIC_LOAD(&context->EnabledEvts, almemory_order_relaxed);
         isrunning = !!enabledevts;
         while(ATOMIC_COMPARE_EXCHANGE_WEAK(&context->EnabledEvts, &enabledevts, enabledevts|flags,
@@ -85,13 +90,9 @@ AL_API void AL_APIENTRY alEventControlSOFT(ALsizei count, const ALenum *types, A
         }
         if(!isrunning && flags)
             althrd_create(&context->EventThread, EventThread, context);
-        almtx_unlock(&context->EventThrdLock);
     }
     else
     {
-        ALbitfieldSOFT enabledevts;
-        bool isrunning;
-        almtx_lock(&context->EventThrdLock);
         enabledevts = ATOMIC_LOAD(&context->EnabledEvts, almemory_order_relaxed);
         isrunning = !!enabledevts;
         while(ATOMIC_COMPARE_EXCHANGE_WEAK(&context->EnabledEvts, &enabledevts, enabledevts&~flags,
@@ -101,9 +102,8 @@ AL_API void AL_APIENTRY alEventControlSOFT(ALsizei count, const ALenum *types, A
         if(isrunning && !(enabledevts&~flags))
         {
             static const AsyncEvent kill_evt = { 0 };
-            while(ll_ringbuffer_write_space(context->AsyncEvents) == 0)
+            while(ll_ringbuffer_write(context->AsyncEvents, (const char*)&kill_evt, 1) == 0)
                 althrd_yield();
-            ll_ringbuffer_write(context->AsyncEvents, (const char*)&kill_evt, 1);
             alsem_post(&context->EventSem);
             althrd_join(context->EventThread, NULL);
         }
@@ -115,8 +115,8 @@ AL_API void AL_APIENTRY alEventControlSOFT(ALsizei count, const ALenum *types, A
             almtx_lock(&context->EventCbLock);
             almtx_unlock(&context->EventCbLock);
         }
-        almtx_unlock(&context->EventThrdLock);
     }
+    almtx_unlock(&context->EventThrdLock);
 
 done:
     ALCcontext_DecRef(context);
@@ -129,10 +129,12 @@ AL_API void AL_APIENTRY alEventCallbackSOFT(ALEVENTPROCSOFT callback, void *user
     context = GetContextRef();
     if(!context) return;
 
+    almtx_lock(&context->PropLock);
     almtx_lock(&context->EventCbLock);
     context->EventCb = callback;
     context->EventParam = userParam;
     almtx_unlock(&context->EventCbLock);
+    almtx_unlock(&context->PropLock);
 
     ALCcontext_DecRef(context);
 }

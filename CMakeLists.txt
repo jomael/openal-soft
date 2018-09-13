@@ -102,8 +102,8 @@ IF(NOT LIBTYPE)
 ENDIF()
 
 SET(LIB_MAJOR_VERSION "1")
-SET(LIB_MINOR_VERSION "18")
-SET(LIB_REVISION "2")
+SET(LIB_MINOR_VERSION "19")
+SET(LIB_REVISION "0")
 SET(LIB_VERSION "${LIB_MAJOR_VERSION}.${LIB_MINOR_VERSION}.${LIB_REVISION}")
 
 SET(EXPORT_DECL "")
@@ -432,6 +432,48 @@ IF(HAVE_MFPU_NEON_SWITCH)
     SET(FPU_NEON_SWITCH "-mfpu=neon")
 ENDIF()
 
+SET(FPMATH_SET "0")
+IF(CMAKE_SIZEOF_VOID_P MATCHES "4")
+    IF(SSE_SWITCH OR MSVC)
+        OPTION(ALSOFT_ENABLE_SSE_CODEGEN "Enable SSE code generation instead of x87 for 32-bit targets." TRUE)
+    ENDIF()
+    IF(SSE2_SWITCH OR MSVC)
+        OPTION(ALSOFT_ENABLE_SSE2_CODEGEN "Enable SSE2 code generation instead of x87 for 32-bit targets." TRUE)
+    ENDIF()
+
+    IF(ALSOFT_ENABLE_SSE2_CODEGEN)
+        IF(SSE2_SWITCH)
+            CHECK_C_COMPILER_FLAG("${SSE2_SWITCH} -mfpmath=sse" HAVE_MFPMATH_SSE_2)
+            IF(HAVE_MFPMATH_SSE_2)
+                SET(C_FLAGS ${C_FLAGS} ${SSE2_SWITCH} -mfpmath=sse)
+                SET(FPMATH_SET 2)
+            ENDIF()
+        ELSEIF(MSVC)
+            CHECK_C_COMPILER_FLAG("/arch:SSE2" HAVE_ARCH_SSE2)
+            IF(HAVE_ARCH_SSE2)
+                SET(C_FLAGS ${C_FLAGS} "/arch:SSE2")
+                SET(FPMATH_SET 2)
+            ENDIF()
+        ENDIF()
+    ENDIF()
+    IF(ALSOFT_ENABLE_SSE_CODEGEN AND NOT FPMATH_SET)
+        IF(SSE_SWITCH)
+            CHECK_C_COMPILER_FLAG("${SSE_SWITCH} -mfpmath=sse" HAVE_MFPMATH_SSE)
+            IF(HAVE_MFPMATH_SSE)
+                SET(C_FLAGS ${C_FLAGS} ${SSE_SWITCH} -mfpmath=sse)
+                SET(FPMATH_SET 1)
+            ENDIF()
+        ELSEIF(MSVC)
+            CHECK_C_COMPILER_FLAG("/arch:SSE" HAVE_ARCH_SSE)
+            IF(HAVE_ARCH_SSE)
+                SET(C_FLAGS ${C_FLAGS} "/arch:SSE")
+                SET(FPMATH_SET 1)
+            ENDIF()
+        ENDIF()
+    ENDIF()
+ENDIF()
+
+
 CHECK_C_SOURCE_COMPILES("int foo(const char *str, ...) __attribute__((format(printf, 1, 2)));
                          int main() {return 0;}" HAVE_GCC_FORMAT)
 
@@ -507,10 +549,12 @@ CHECK_SYMBOL_EXISTS(sysconf          unistd.h HAVE_SYSCONF)
 CHECK_SYMBOL_EXISTS(aligned_alloc    stdlib.h HAVE_ALIGNED_ALLOC)
 CHECK_SYMBOL_EXISTS(posix_memalign   stdlib.h HAVE_POSIX_MEMALIGN)
 CHECK_SYMBOL_EXISTS(_aligned_malloc  malloc.h HAVE__ALIGNED_MALLOC)
+CHECK_SYMBOL_EXISTS(proc_pidpath     libproc.h HAVE_PROC_PIDPATH)
 CHECK_SYMBOL_EXISTS(lrintf math.h HAVE_LRINTF)
 CHECK_SYMBOL_EXISTS(modff  math.h HAVE_MODFF)
 CHECK_SYMBOL_EXISTS(log2f  math.h HAVE_LOG2F)
 CHECK_SYMBOL_EXISTS(cbrtf  math.h HAVE_CBRTF)
+CHECK_SYMBOL_EXISTS(copysignf math.h HAVE_COPYSIGNF)
 
 IF(HAVE_FLOAT_H)
     CHECK_SYMBOL_EXISTS(_controlfp float.h HAVE__CONTROLFP)
@@ -576,7 +620,12 @@ ENDIF()
 
 
 # Check if we have Windows headers
-CHECK_INCLUDE_FILE(windows.h HAVE_WINDOWS_H -D_WIN32_WINNT=0x0502)
+SET(OLD_REQUIRED_DEFINITIONS ${CMAKE_REQUIRED_DEFINITIONS})
+SET(CMAKE_REQUIRED_DEFINITIONS ${CMAKE_REQUIRED_DEFINITIONS} -D_WIN32_WINNT=0x0502)
+CHECK_INCLUDE_FILE(windows.h HAVE_WINDOWS_H)
+SET(CMAKE_REQUIRED_DEFINITIONS ${OLD_REQUIRED_DEFINITIONS})
+UNSET(OLD_REQUIRED_DEFINITIONS)
+
 IF(NOT HAVE_WINDOWS_H)
     CHECK_SYMBOL_EXISTS(gettimeofday sys/time.h HAVE_GETTIMEOFDAY)
     IF(NOT HAVE_GETTIMEOFDAY)
@@ -693,49 +742,100 @@ IF(NOT HAVE_STDINT_H)
 ENDIF()
 
 
-SET(COMMON_OBJS  common/almalloc.c
-                 common/atomic.c
-                 common/rwlock.c
-                 common/threads.c
-                 common/uintmap.c
+SET(COMMON_OBJS
+    common/alcomplex.c
+    common/alcomplex.h
+    common/align.h
+    common/almalloc.c
+    common/almalloc.h
+    common/atomic.c
+    common/atomic.h
+    common/bool.h
+    common/math_defs.h
+    common/rwlock.c
+    common/rwlock.h
+    common/static_assert.h
+    common/threads.c
+    common/threads.h
+    common/uintmap.c
+    common/uintmap.h
 )
-SET(OPENAL_OBJS  OpenAL32/alAuxEffectSlot.c
-                 OpenAL32/alBuffer.c
-                 OpenAL32/alEffect.c
-                 OpenAL32/alError.c
-                 OpenAL32/alExtension.c
-                 OpenAL32/alFilter.c
-                 OpenAL32/alListener.c
-                 OpenAL32/alSource.c
-                 OpenAL32/alState.c
-                 OpenAL32/event.c
-                 OpenAL32/sample_cvt.c
+SET(OPENAL_OBJS
+    OpenAL32/Include/bs2b.h
+    OpenAL32/Include/alMain.h
+    OpenAL32/Include/alu.h
+
+    OpenAL32/Include/alAuxEffectSlot.h
+    OpenAL32/alAuxEffectSlot.c
+    OpenAL32/Include/alBuffer.h
+    OpenAL32/alBuffer.c
+    OpenAL32/Include/alEffect.h
+    OpenAL32/alEffect.c
+    OpenAL32/Include/alError.h
+    OpenAL32/alError.c
+    OpenAL32/alExtension.c
+    OpenAL32/Include/alFilter.h
+    OpenAL32/alFilter.c
+    OpenAL32/Include/alListener.h
+    OpenAL32/alListener.c
+    OpenAL32/Include/alSource.h
+    OpenAL32/alSource.c
+    OpenAL32/alState.c
+    OpenAL32/event.c
+    OpenAL32/Include/sample_cvt.h
+    OpenAL32/sample_cvt.c
 )
-SET(ALC_OBJS  Alc/ALc.c
-              Alc/ALu.c
-              Alc/alconfig.c
-              Alc/bs2b.c
-              Alc/converter.c
-              Alc/mastering.c
-              Alc/ringbuffer.c
-              Alc/effects/chorus.c
-              Alc/effects/compressor.c
-              Alc/effects/dedicated.c
-              Alc/effects/distortion.c
-              Alc/effects/echo.c
-              Alc/effects/equalizer.c
-              Alc/effects/modulator.c
-              Alc/effects/null.c
-              Alc/effects/reverb.c
-              Alc/helpers.c
-              Alc/hrtf.c
-              Alc/uhjfilter.c
-              Alc/ambdec.c
-              Alc/bformatdec.c
-              Alc/nfcfilter.c
-              Alc/panning.c
-              Alc/mixer.c
-              Alc/mixer_c.c
+SET(ALC_OBJS
+    Alc/ALc.c
+    Alc/ALu.c
+    Alc/alconfig.c
+    Alc/alconfig.h
+    Alc/bs2b.c
+    Alc/converter.c
+    Alc/converter.h
+    Alc/inprogext.h
+    Alc/mastering.c
+    Alc/mastering.h
+    Alc/ringbuffer.c
+    Alc/ringbuffer.h
+    Alc/effects/autowah.c
+    Alc/effects/chorus.c
+    Alc/effects/compressor.c
+    Alc/effects/dedicated.c
+    Alc/effects/distortion.c
+    Alc/effects/echo.c
+    Alc/effects/equalizer.c
+    Alc/effects/fshifter.c
+    Alc/effects/modulator.c
+    Alc/effects/null.c
+    Alc/effects/pshifter.c
+    Alc/effects/reverb.c
+    Alc/filters/defs.h
+    Alc/filters/filter.c
+    Alc/filters/nfc.c
+    Alc/filters/nfc.h
+    Alc/filters/splitter.c
+    Alc/filters/splitter.h
+    Alc/helpers.c
+    Alc/alstring.h
+    Alc/compat.h
+    Alc/cpu_caps.h
+    Alc/fpu_modes.h
+    Alc/logging.h
+    Alc/vector.h
+    Alc/hrtf.c
+    Alc/hrtf.h
+    Alc/uhjfilter.c
+    Alc/uhjfilter.h
+    Alc/ambdec.c
+    Alc/ambdec.h
+    Alc/bformatdec.c
+    Alc/bformatdec.h
+    Alc/panning.c
+    Alc/polymorphism.h
+    Alc/mixvoice.c
+    Alc/mixer/defs.h
+    Alc/mixer/mixer_c.c
 )
 
 
@@ -752,13 +852,14 @@ SET(HAVE_SOLARIS    0)
 SET(HAVE_SNDIO      0)
 SET(HAVE_QSA        0)
 SET(HAVE_DSOUND     0)
-SET(HAVE_MMDEVAPI   0)
+SET(HAVE_WASAPI     0)
 SET(HAVE_WINMM      0)
 SET(HAVE_PORTAUDIO  0)
 SET(HAVE_PULSEAUDIO 0)
 SET(HAVE_COREAUDIO  0)
 SET(HAVE_OPENSL     0)
 SET(HAVE_WAVE       0)
+SET(HAVE_SDL2       0)
 
 # Check for SSE support
 OPTION(ALSOFT_REQUIRE_SSE "Require SSE support" OFF)
@@ -768,9 +869,9 @@ IF(HAVE_XMMINTRIN_H)
     IF(ALSOFT_CPUEXT_SSE)
         IF(ALIGN_DECL OR HAVE_C11_ALIGNAS)
             SET(HAVE_SSE 1)
-            SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer_sse.c)
+            SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer/mixer_sse.c)
             IF(SSE_SWITCH)
-                SET_SOURCE_FILES_PROPERTIES(Alc/mixer_sse.c PROPERTIES
+                SET_SOURCE_FILES_PROPERTIES(Alc/mixer/mixer_sse.c PROPERTIES
                                             COMPILE_FLAGS "${SSE_SWITCH}")
             ENDIF()
             SET(CPU_EXTS "${CPU_EXTS}, SSE")
@@ -788,9 +889,9 @@ IF(HAVE_EMMINTRIN_H)
     IF(HAVE_SSE AND ALSOFT_CPUEXT_SSE2)
         IF(ALIGN_DECL OR HAVE_C11_ALIGNAS)
             SET(HAVE_SSE2 1)
-            SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer_sse2.c)
+            SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer/mixer_sse2.c)
             IF(SSE2_SWITCH)
-                SET_SOURCE_FILES_PROPERTIES(Alc/mixer_sse2.c PROPERTIES
+                SET_SOURCE_FILES_PROPERTIES(Alc/mixer/mixer_sse2.c PROPERTIES
                                             COMPILE_FLAGS "${SSE2_SWITCH}")
             ENDIF()
             SET(CPU_EXTS "${CPU_EXTS}, SSE2")
@@ -801,16 +902,16 @@ IF(ALSOFT_REQUIRE_SSE2 AND NOT HAVE_SSE2)
     MESSAGE(FATAL_ERROR "Failed to enable required SSE2 CPU extensions")
 ENDIF()
 
-OPTION(ALSOFT_REQUIRE_SSE2 "Require SSE3 support" OFF)
+OPTION(ALSOFT_REQUIRE_SSE3 "Require SSE3 support" OFF)
 CHECK_INCLUDE_FILE(pmmintrin.h HAVE_PMMINTRIN_H "${SSE3_SWITCH}")
 IF(HAVE_EMMINTRIN_H)
     OPTION(ALSOFT_CPUEXT_SSE3 "Enable SSE3 support" ON)
     IF(HAVE_SSE2 AND ALSOFT_CPUEXT_SSE3)
         IF(ALIGN_DECL OR HAVE_C11_ALIGNAS)
             SET(HAVE_SSE3 1)
-            SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer_sse3.c)
+            SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer/mixer_sse3.c)
             IF(SSE2_SWITCH)
-                SET_SOURCE_FILES_PROPERTIES(Alc/mixer_sse3.c PROPERTIES
+                SET_SOURCE_FILES_PROPERTIES(Alc/mixer/mixer_sse3.c PROPERTIES
                                             COMPILE_FLAGS "${SSE3_SWITCH}")
             ENDIF()
             SET(CPU_EXTS "${CPU_EXTS}, SSE3")
@@ -828,9 +929,9 @@ IF(HAVE_SMMINTRIN_H)
     IF(HAVE_SSE2 AND ALSOFT_CPUEXT_SSE4_1)
         IF(ALIGN_DECL OR HAVE_C11_ALIGNAS)
             SET(HAVE_SSE4_1 1)
-            SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer_sse41.c)
+            SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer/mixer_sse41.c)
             IF(SSE4_1_SWITCH)
-                SET_SOURCE_FILES_PROPERTIES(Alc/mixer_sse41.c PROPERTIES
+                SET_SOURCE_FILES_PROPERTIES(Alc/mixer/mixer_sse41.c PROPERTIES
                                             COMPILE_FLAGS "${SSE4_1_SWITCH}")
             ENDIF()
             SET(CPU_EXTS "${CPU_EXTS}, SSE4.1")
@@ -848,9 +949,9 @@ IF(HAVE_ARM_NEON_H)
     OPTION(ALSOFT_CPUEXT_NEON "Enable ARM Neon support" ON)
     IF(ALSOFT_CPUEXT_NEON)
         SET(HAVE_NEON 1)
-        SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer_neon.c)
+        SET(ALC_OBJS  ${ALC_OBJS} Alc/mixer/mixer_neon.c)
         IF(FPU_NEON_SWITCH)
-            SET_SOURCE_FILES_PROPERTIES(Alc/mixer_neon.c PROPERTIES
+            SET_SOURCE_FILES_PROPERTIES(Alc/mixer/mixer_neon.c PROPERTIES
                                         COMPILE_FLAGS "${FPU_NEON_SWITCH}")
         ENDIF()
         SET(CPU_EXTS "${CPU_EXTS}, Neon")
@@ -874,10 +975,11 @@ ENDIF()
 
 SET(BACKENDS "")
 SET(ALC_OBJS  ${ALC_OBJS}
-              Alc/backends/base.c
-              # Default backends, always available
-              Alc/backends/loopback.c
-              Alc/backends/null.c
+    Alc/backends/base.c
+    Alc/backends/base.h
+    # Default backends, always available
+    Alc/backends/loopback.c
+    Alc/backends/null.c
 )
 
 # Check ALSA backend
@@ -969,10 +1071,13 @@ ENDIF()
 # Check Windows-only backends
 OPTION(ALSOFT_REQUIRE_WINMM "Require Windows Multimedia backend" OFF)
 OPTION(ALSOFT_REQUIRE_DSOUND "Require DirectSound backend" OFF)
-OPTION(ALSOFT_REQUIRE_MMDEVAPI "Require MMDevApi backend" OFF)
+OPTION(ALSOFT_REQUIRE_WASAPI "Require WASAPI backend" OFF)
 IF(HAVE_WINDOWS_H)
+    SET(OLD_REQUIRED_DEFINITIONS ${CMAKE_REQUIRED_DEFINITIONS})
+    SET(CMAKE_REQUIRED_DEFINITIONS ${CMAKE_REQUIRED_DEFINITIONS} -D_WIN32_WINNT=0x0502)
+
     # Check MMSystem backend
-    CHECK_INCLUDE_FILES("windows.h;mmsystem.h" HAVE_MMSYSTEM_H -D_WIN32_WINNT=0x0502)
+    CHECK_INCLUDE_FILES("windows.h;mmsystem.h" HAVE_MMSYSTEM_H)
     IF(HAVE_MMSYSTEM_H)
         CHECK_SHARED_FUNCTION_EXISTS(waveOutOpen "windows.h;mmsystem.h" winmm "" HAVE_LIBWINMM)
         IF(HAVE_LIBWINMM)
@@ -999,16 +1104,19 @@ IF(HAVE_WINDOWS_H)
         ENDIF()
     ENDIF()
 
-    # Check for MMDevApi backend
+    # Check for WASAPI backend
     CHECK_INCLUDE_FILE(mmdeviceapi.h HAVE_MMDEVICEAPI_H)
     IF(HAVE_MMDEVICEAPI_H)
-        OPTION(ALSOFT_BACKEND_MMDEVAPI "Enable MMDevApi backend" ON)
-        IF(ALSOFT_BACKEND_MMDEVAPI)
-            SET(HAVE_MMDEVAPI 1)
-            SET(BACKENDS  "${BACKENDS} MMDevApi,")
-            SET(ALC_OBJS  ${ALC_OBJS} Alc/backends/mmdevapi.c)
+        OPTION(ALSOFT_BACKEND_WASAPI "Enable WASAPI backend" ON)
+        IF(ALSOFT_BACKEND_WASAPI)
+            SET(HAVE_WASAPI 1)
+            SET(BACKENDS  "${BACKENDS} WASAPI,")
+            SET(ALC_OBJS  ${ALC_OBJS} Alc/backends/wasapi.c)
         ENDIF()
     ENDIF()
+
+    SET(CMAKE_REQUIRED_DEFINITIONS ${OLD_REQUIRED_DEFINITIONS})
+    UNSET(OLD_REQUIRED_DEFINITIONS)
 ENDIF()
 IF(ALSOFT_REQUIRE_WINMM AND NOT HAVE_WINMM)
     MESSAGE(FATAL_ERROR "Failed to enabled required WinMM backend")
@@ -1016,8 +1124,8 @@ ENDIF()
 IF(ALSOFT_REQUIRE_DSOUND AND NOT HAVE_DSOUND)
     MESSAGE(FATAL_ERROR "Failed to enabled required DSound backend")
 ENDIF()
-IF(ALSOFT_REQUIRE_MMDEVAPI AND NOT HAVE_MMDEVAPI)
-    MESSAGE(FATAL_ERROR "Failed to enabled required MMDevApi backend")
+IF(ALSOFT_REQUIRE_WASAPI AND NOT HAVE_WASAPI)
+    MESSAGE(FATAL_ERROR "Failed to enabled required WASAPI backend")
 ENDIF()
 
 # Check PortAudio backend
@@ -1123,6 +1231,24 @@ IF(ALSOFT_REQUIRE_OPENSL AND NOT HAVE_OPENSL)
     MESSAGE(FATAL_ERROR "Failed to enabled required OpenSL backend")
 ENDIF()
 
+# Check for SDL2 backend
+OPTION(ALSOFT_REQUIRE_SDL2 "Require SDL2 backend" OFF)
+FIND_PACKAGE(SDL2)
+IF(SDL2_FOUND)
+    # Off by default, since it adds a runtime dependency
+    OPTION(ALSOFT_BACKEND_SDL2 "Enable SDL2 backend" OFF)
+    IF(ALSOFT_BACKEND_SDL2)
+        SET(HAVE_SDL2 1)
+        SET(ALC_OBJS  ${ALC_OBJS} Alc/backends/sdl2.c)
+        SET(BACKENDS  "${BACKENDS} SDL2,")
+        SET(EXTRA_LIBS ${SDL2_LIBRARY} ${EXTRA_LIBS})
+        SET(INC_PATHS ${INC_PATHS} ${SDL2_INCLUDE_DIR})
+    ENDIF()
+ENDIF()
+IF(ALSOFT_REQUIRE_SDL2 AND NOT SDL2_FOUND)
+    MESSAGE(FATAL_ERROR "Failed to enabled required SDL2 backend")
+ENDIF()
+
 # Optionally enable the Wave Writer backend
 OPTION(ALSOFT_BACKEND_WAVE "Enable Wave Writer backend" ON)
 IF(ALSOFT_BACKEND_WAVE)
@@ -1176,7 +1302,7 @@ ADD_CUSTOM_TARGET(native-tools
     VERBATIM
 )
 
-option(ALSOFT_EMBED_HRTF_DATA "Embed the HRTF data files (increases library footprint)" OFF)
+option(ALSOFT_EMBED_HRTF_DATA "Embed the HRTF data files (increases library footprint)" ON)
 if(ALSOFT_EMBED_HRTF_DATA)
     MACRO(make_hrtf_header FILENAME VARNAME)
         SET(infile  "${OpenAL_SOURCE_DIR}/hrtf/${FILENAME}")
@@ -1206,7 +1332,9 @@ IF(ALSOFT_UTILS AND NOT ALSOFT_NO_CONFIG_UTIL)
     add_subdirectory(utils/alsoft-config)
 ENDIF()
 IF(ALSOFT_EXAMPLES)
-    FIND_PACKAGE(SDL2)
+    IF(NOT SDL2_FOUND)
+        FIND_PACKAGE(SDL2)
+    ENDIF()
     IF(SDL2_FOUND)
         FIND_PACKAGE(SDL_sound)
         FIND_PACKAGE(FFmpeg COMPONENTS AVFORMAT AVCODEC AVUTIL SWSCALE SWRESAMPLE)
@@ -1226,8 +1354,19 @@ SET(libdir "\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}")
 SET(bindir "\${exec_prefix}/${CMAKE_INSTALL_BINDIR}")
 SET(includedir "\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}")
 SET(PACKAGE_VERSION "${LIB_VERSION}")
+SET(PKG_CONFIG_CFLAGS )
+SET(PKG_CONFIG_PRIVATE_LIBS )
 IF(LIBTYPE STREQUAL "STATIC")
-    SET(PKG_CONFIG_CFLAGS -DAL_LIBTYPE_STATIC ${PKG_CONFIG_CFLAGS})
+    SET(PKG_CONFIG_CFLAGS -DAL_LIBTYPE_STATIC)
+    FOREACH(FLAG  ${LINKER_FLAGS} ${EXTRA_LIBS} ${MATH_LIB})
+        # If this is already a linker flag, or is a full path+file, add it
+        # as-is. Otherwise, it's a name intended to be dressed as -lname.
+        IF(FLAG MATCHES "^-.*" OR EXISTS "${FLAG}")
+            SET(PKG_CONFIG_PRIVATE_LIBS "${PKG_CONFIG_PRIVATE_LIBS} ${FLAG}")
+        ELSE()
+            SET(PKG_CONFIG_PRIVATE_LIBS "${PKG_CONFIG_PRIVATE_LIBS} -l${FLAG}")
+        ENDIF()
+    ENDFOREACH()
 ENDIF()
 
 # End configuration
@@ -1273,7 +1412,7 @@ ELSE()
     ENDIF()
 
     IF(WIN32 AND ALSOFT_BUILD_ROUTER)
-        ADD_LIBRARY(OpenAL SHARED router/router.c router/alc.c router/al.c)
+        ADD_LIBRARY(OpenAL SHARED router/router.c router/router.h router/alc.c router/al.c)
         TARGET_COMPILE_DEFINITIONS(OpenAL
             PRIVATE AL_BUILD_LIBRARY AL_ALEXT_PROTOTYPES ${CPP_DEFS})
         TARGET_COMPILE_OPTIONS(OpenAL PRIVATE ${C_FLAGS})
@@ -1376,6 +1515,10 @@ MESSAGE(STATUS "")
 MESSAGE(STATUS "Building with support for CPU extensions:")
 MESSAGE(STATUS "    ${CPU_EXTS}")
 MESSAGE(STATUS "")
+IF(FPMATH_SET)
+    MESSAGE(STATUS "Building with SSE${FPMATH_SET} codegen")
+    MESSAGE(STATUS "")
+ENDIF()
 
 IF(WIN32)
     IF(NOT HAVE_DSOUND)
@@ -1431,7 +1574,7 @@ IF(ALSOFT_UTILS)
 
     SET(MAKEHRTF_SRCS  utils/makehrtf.c)
     IF(NOT HAVE_GETOPT)
-        SET(MAKEHRTF_SRCS  ${MAKEHRTF_SRCS} utils/getopt.c)
+        SET(MAKEHRTF_SRCS  ${MAKEHRTF_SRCS} utils/getopt.c utils/getopt.h)
     ENDIF()
     ADD_EXECUTABLE(makehrtf ${MAKEHRTF_SRCS})
     TARGET_COMPILE_DEFINITIONS(makehrtf PRIVATE ${CPP_DEFS})
@@ -1525,6 +1668,15 @@ IF(ALSOFT_EXAMPLES)
                 PRIVATE ${LINKER_FLAGS} ${SDL_SOUND_LIBRARIES} ${SDL2_LIBRARY} ex-common common
                         OpenAL)
 
+            ADD_EXECUTABLE(almultireverb examples/almultireverb.c)
+            TARGET_COMPILE_DEFINITIONS(almultireverb PRIVATE ${CPP_DEFS})
+            TARGET_INCLUDE_DIRECTORIES(almultireverb
+                PRIVATE ${SDL2_INCLUDE_DIR} ${SDL_SOUND_INCLUDE_DIR})
+            TARGET_COMPILE_OPTIONS(almultireverb PRIVATE ${C_FLAGS})
+            TARGET_LINK_LIBRARIES(almultireverb
+                PRIVATE ${LINKER_FLAGS} ${SDL_SOUND_LIBRARIES} ${SDL2_LIBRARY} ex-common common
+                        OpenAL ${MATH_LIB})
+
             ADD_EXECUTABLE(allatency examples/allatency.c)
             TARGET_COMPILE_DEFINITIONS(allatency PRIVATE ${CPP_DEFS})
             TARGET_INCLUDE_DIRECTORIES(allatency
@@ -1553,7 +1705,7 @@ IF(ALSOFT_EXAMPLES)
                         OpenAL ${MATH_LIB})
 
             IF(ALSOFT_INSTALL)
-                INSTALL(TARGETS alplay alstream alreverb allatency alloopback alhrtf
+                INSTALL(TARGETS alplay alstream alreverb almultireverb allatency alloopback alhrtf
                         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
                         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
                         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

@@ -24,22 +24,24 @@
 #include <stdlib.h>
 
 #include "alMain.h"
-#include "alFilter.h"
 #include "alAuxEffectSlot.h"
 #include "alError.h"
 #include "alu.h"
+#include "filters/defs.h"
 
+
+#define MAX_UPDATE_SAMPLES 128
 
 typedef struct ALmodulatorState {
     DERIVE_FROM_TYPE(ALeffectState);
 
-    void (*Process)(ALfloat*, const ALfloat*, ALsizei, const ALsizei, ALsizei);
+    void (*GetSamples)(ALfloat*, ALsizei, const ALsizei, ALsizei);
 
     ALsizei index;
     ALsizei step;
 
     struct {
-        ALfilterState Filter;
+        BiquadFilter Filter;
 
         ALfloat CurrentGains[MAX_OUTPUT_CHANNELS];
         ALfloat TargetGains[MAX_OUTPUT_CHANNELS];
@@ -61,35 +63,41 @@ DEFINE_ALEFFECTSTATE_VTABLE(ALmodulatorState);
 
 static inline ALfloat Sin(ALsizei index)
 {
-    return sinf(index*(F_TAU/WAVEFORM_FRACONE) - F_PI)*0.5f + 0.5f;
+    return sinf((ALfloat)index * (F_TAU / WAVEFORM_FRACONE));
 }
 
 static inline ALfloat Saw(ALsizei index)
 {
-    return (ALfloat)index / WAVEFORM_FRACONE;
+    return (ALfloat)index*(2.0f/WAVEFORM_FRACONE) - 1.0f;
 }
 
 static inline ALfloat Square(ALsizei index)
 {
-    return (ALfloat)((index >> (WAVEFORM_FRACBITS - 1)) & 1);
+    return (ALfloat)(((index>>(WAVEFORM_FRACBITS-2))&2) - 1);
+}
+
+static inline ALfloat One(ALsizei UNUSED(index))
+{
+    return 1.0f;
 }
 
 #define DECL_TEMPLATE(func)                                                   \
-static void Modulate##func(ALfloat *restrict dst, const ALfloat *restrict src,\
-                           ALsizei index, const ALsizei step, ALsizei todo)   \
+static void Modulate##func(ALfloat *restrict dst, ALsizei index,              \
+                           const ALsizei step, ALsizei todo)                  \
 {                                                                             \
     ALsizei i;                                                                \
     for(i = 0;i < todo;i++)                                                   \
     {                                                                         \
         index += step;                                                        \
         index &= WAVEFORM_FRACMASK;                                           \
-        dst[i] = src[i] * func(index);                                        \
+        dst[i] = func(index);                                                 \
     }                                                                         \
 }
 
 DECL_TEMPLATE(Sin)
 DECL_TEMPLATE(Saw)
 DECL_TEMPLATE(Square)
+DECL_TEMPLATE(One)
 
 #undef DECL_TEMPLATE
 
@@ -113,7 +121,7 @@ static ALboolean ALmodulatorState_deviceUpdate(ALmodulatorState *state, ALCdevic
     ALsizei i, j;
     for(i = 0;i < MAX_EFFECT_CHANNELS;i++)
     {
-        ALfilterState_clear(&state->Chans[i].Filter);
+        BiquadFilter_clear(&state->Chans[i].Filter);
         for(j = 0;j < MAX_OUTPUT_CHANNELS;j++)
             state->Chans[i].CurrentGains[j] = 0.0f;
     }
@@ -123,31 +131,29 @@ static ALboolean ALmodulatorState_deviceUpdate(ALmodulatorState *state, ALCdevic
 static ALvoid ALmodulatorState_update(ALmodulatorState *state, const ALCcontext *context, const ALeffectslot *slot, const ALeffectProps *props)
 {
     const ALCdevice *device = context->Device;
-    ALfloat cw, a;
+    ALfloat f0norm;
     ALsizei i;
 
-    if(props->Modulator.Waveform == AL_RING_MODULATOR_SINUSOID)
-        state->Process = ModulateSin;
+    state->step = fastf2i(props->Modulator.Frequency / (ALfloat)device->Frequency *
+                          WAVEFORM_FRACONE);
+    state->step = clampi(state->step, 0, WAVEFORM_FRACONE-1);
+
+    if(state->step == 0)
+        state->GetSamples = ModulateOne;
+    else if(props->Modulator.Waveform == AL_RING_MODULATOR_SINUSOID)
+        state->GetSamples = ModulateSin;
     else if(props->Modulator.Waveform == AL_RING_MODULATOR_SAWTOOTH)
-        state->Process = ModulateSaw;
+        state->GetSamples = ModulateSaw;
     else /*if(Slot->Params.EffectProps.Modulator.Waveform == AL_RING_MODULATOR_SQUARE)*/
-        state->Process = ModulateSquare;
+        state->GetSamples = ModulateSquare;
 
-    state->step = fastf2i(props->Modulator.Frequency*WAVEFORM_FRACONE /
-                          device->Frequency);
-    if(state->step == 0) state->step = 1;
-
-    /* Custom filter coeffs, which match the old version instead of a low-shelf. */
-    cw = cosf(F_TAU * props->Modulator.HighPassCutoff / device->Frequency);
-    a = (2.0f-cw) - sqrtf(powf(2.0f-cw, 2.0f) - 1.0f);
-
-    state->Chans[0].Filter.b0 = a;
-    state->Chans[0].Filter.b1 = -a;
-    state->Chans[0].Filter.b2 = 0.0f;
-    state->Chans[0].Filter.a1 = -a;
-    state->Chans[0].Filter.a2 = 0.0f;
+    f0norm = props->Modulator.HighPassCutoff / (ALfloat)device->Frequency;
+    f0norm = clampf(f0norm, 1.0f/512.0f, 0.49f);
+    /* Bandwidth value is constant in octaves. */
+    BiquadFilter_setParams(&state->Chans[0].Filter, BiquadType_HighPass, 1.0f,
+                           f0norm, calc_rcpQ_from_bandwidth(f0norm, 0.75f));
     for(i = 1;i < MAX_EFFECT_CHANNELS;i++)
-        ALfilterState_copyParams(&state->Chans[i].Filter, &state->Chans[0].Filter);
+        BiquadFilter_copyParams(&state->Chans[i].Filter, &state->Chans[0].Filter);
 
     STATIC_CAST(ALeffectState,state)->OutBuffer = device->FOAOut.Buffer;
     STATIC_CAST(ALeffectState,state)->OutChannels = device->FOAOut.NumChannels;
@@ -159,38 +165,40 @@ static ALvoid ALmodulatorState_update(ALmodulatorState *state, const ALCcontext 
 static ALvoid ALmodulatorState_process(ALmodulatorState *state, ALsizei SamplesToDo, const ALfloat (*restrict SamplesIn)[BUFFERSIZE], ALfloat (*restrict SamplesOut)[BUFFERSIZE], ALsizei NumChannels)
 {
     const ALsizei step = state->step;
-    ALsizei index = state->index;
     ALsizei base;
 
     for(base = 0;base < SamplesToDo;)
     {
-        ALfloat temps[2][128];
-        ALsizei td = mini(128, SamplesToDo-base);
-        ALsizei i;
+        alignas(16) ALfloat modsamples[MAX_UPDATE_SAMPLES];
+        ALsizei td = mini(MAX_UPDATE_SAMPLES, SamplesToDo-base);
+        ALsizei c, i;
 
-        for(i = 0;i < MAX_EFFECT_CHANNELS;i++)
+        state->GetSamples(modsamples, state->index, step, td);
+        state->index += (step*td) & WAVEFORM_FRACMASK;
+        state->index &= WAVEFORM_FRACMASK;
+
+        for(c = 0;c < MAX_EFFECT_CHANNELS;c++)
         {
-            ALfilterState_process(&state->Chans[i].Filter, temps[0], &SamplesIn[i][base], td);
-            state->Process(temps[1], temps[0], index, step, td);
+            alignas(16) ALfloat temps[MAX_UPDATE_SAMPLES];
 
-            MixSamples(temps[1], NumChannels, SamplesOut, state->Chans[i].CurrentGains,
-                       state->Chans[i].TargetGains, SamplesToDo-base, base, td);
+            BiquadFilter_process(&state->Chans[c].Filter, temps, &SamplesIn[c][base], td);
+            for(i = 0;i < td;i++)
+                temps[i] *= modsamples[i];
+
+            MixSamples(temps, NumChannels, SamplesOut, state->Chans[c].CurrentGains,
+                       state->Chans[c].TargetGains, SamplesToDo-base, base, td);
         }
 
-        for(i = 0;i < td;i++)
-            index += step;
-        index &= WAVEFORM_FRACMASK;
         base += td;
     }
-    state->index = index;
 }
 
 
-typedef struct ALmodulatorStateFactory {
-    DERIVE_FROM_TYPE(ALeffectStateFactory);
-} ALmodulatorStateFactory;
+typedef struct ModulatorStateFactory {
+    DERIVE_FROM_TYPE(EffectStateFactory);
+} ModulatorStateFactory;
 
-static ALeffectState *ALmodulatorStateFactory_create(ALmodulatorStateFactory *UNUSED(factory))
+static ALeffectState *ModulatorStateFactory_create(ModulatorStateFactory *UNUSED(factory))
 {
     ALmodulatorState *state;
 
@@ -200,13 +208,13 @@ static ALeffectState *ALmodulatorStateFactory_create(ALmodulatorStateFactory *UN
     return STATIC_CAST(ALeffectState, state);
 }
 
-DEFINE_ALEFFECTSTATEFACTORY_VTABLE(ALmodulatorStateFactory);
+DEFINE_EFFECTSTATEFACTORY_VTABLE(ModulatorStateFactory);
 
-ALeffectStateFactory *ALmodulatorStateFactory_getFactory(void)
+EffectStateFactory *ModulatorStateFactory_getFactory(void)
 {
-    static ALmodulatorStateFactory ModulatorFactory = { { GET_VTABLE2(ALmodulatorStateFactory, ALeffectStateFactory) } };
+    static ModulatorStateFactory ModulatorFactory = { { GET_VTABLE2(ModulatorStateFactory, EffectStateFactory) } };
 
-    return STATIC_CAST(ALeffectStateFactory, &ModulatorFactory);
+    return STATIC_CAST(EffectStateFactory, &ModulatorFactory);
 }
 
 

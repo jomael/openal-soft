@@ -28,6 +28,7 @@
 #include "alAuxEffectSlot.h"
 #include "alError.h"
 #include "alu.h"
+#include "filters/defs.h"
 
 
 typedef struct ALechoState {
@@ -51,7 +52,7 @@ typedef struct ALechoState {
 
     ALfloat FeedGain;
 
-    ALfilterState Filter;
+    BiquadFilter Filter;
 } ALechoState;
 
 static ALvoid ALechoState_Destruct(ALechoState *state);
@@ -75,7 +76,7 @@ static void ALechoState_Construct(ALechoState *state)
     state->Tap[1].delay = 0;
     state->Offset = 0;
 
-    ALfilterState_clear(&state->Filter);
+    BiquadFilter_clear(&state->Filter);
 }
 
 static ALvoid ALechoState_Destruct(ALechoState *state)
@@ -91,8 +92,8 @@ static ALboolean ALechoState_deviceUpdate(ALechoState *state, ALCdevice *Device)
 
     // Use the next power of 2 for the buffer length, so the tap offsets can be
     // wrapped using a mask instead of a modulo
-    maxlen = fastf2i(AL_ECHO_MAX_DELAY*Device->Frequency + 0.5f) +
-             fastf2i(AL_ECHO_MAX_LRDELAY*Device->Frequency + 0.5f);
+    maxlen = float2int(AL_ECHO_MAX_DELAY*Device->Frequency + 0.5f) +
+             float2int(AL_ECHO_MAX_LRDELAY*Device->Frequency + 0.5f);
     maxlen = NextPowerOf2(maxlen);
     if(maxlen <= 0) return AL_FALSE;
 
@@ -119,8 +120,8 @@ static ALvoid ALechoState_update(ALechoState *state, const ALCcontext *context, 
     ALfloat coeffs[MAX_AMBI_COEFFS];
     ALfloat gainhf, lrpan, spread;
 
-    state->Tap[0].delay = maxi(fastf2i(props->Echo.Delay*frequency + 0.5f), 1);
-    state->Tap[1].delay = fastf2i(props->Echo.LRDelay*frequency + 0.5f);
+    state->Tap[0].delay = maxi(float2int(props->Echo.Delay*frequency + 0.5f), 1);
+    state->Tap[1].delay = float2int(props->Echo.LRDelay*frequency + 0.5f);
     state->Tap[1].delay += state->Tap[0].delay;
 
     spread = props->Echo.Spread;
@@ -134,9 +135,9 @@ static ALvoid ALechoState_update(ALechoState *state, const ALCcontext *context, 
     state->FeedGain = props->Echo.Feedback;
 
     gainhf = maxf(1.0f - props->Echo.Damping, 0.0625f); /* Limit -24dB */
-    ALfilterState_setParams(&state->Filter, ALfilterType_HighShelf,
-                            gainhf, LOWPASSFREQREF/frequency,
-                            calc_rcpQ_from_slope(gainhf, 1.0f));
+    BiquadFilter_setParams(&state->Filter, BiquadType_HighShelf,
+        gainhf, LOWPASSFREQREF/frequency, calc_rcpQ_from_slope(gainhf, 1.0f)
+    );
 
     /* First tap panning */
     CalcAngleCoeffs(-F_PI_2*lrpan, 0.0f, spread, coeffs);
@@ -154,17 +155,15 @@ static ALvoid ALechoState_process(ALechoState *state, ALsizei SamplesToDo, const
     const ALsizei tap2 = state->Tap[1].delay;
     ALfloat *restrict delaybuf = state->SampleBuffer;
     ALsizei offset = state->Offset;
-    ALfloat x[2], y[2], in, out;
+    ALfloat z1, z2, in, out;
     ALsizei base;
     ALsizei c, i;
 
-    x[0] = state->Filter.x[0];
-    x[1] = state->Filter.x[1];
-    y[0] = state->Filter.y[0];
-    y[1] = state->Filter.y[1];
+    z1 = state->Filter.z1;
+    z2 = state->Filter.z2;
     for(base = 0;base < SamplesToDo;)
     {
-        ALfloat temps[2][128];
+        alignas(16) ALfloat temps[2][128];
         ALsizei td = mini(128, SamplesToDo-base);
 
         for(i = 0;i < td;i++)
@@ -181,11 +180,9 @@ static ALvoid ALechoState_process(ALechoState *state, ALsizei SamplesToDo, const
              * feedback attenuation.
              */
             in = temps[1][i];
-            out = in*state->Filter.b0 +
-                  x[0]*state->Filter.b1 + x[1]*state->Filter.b2 -
-                  y[0]*state->Filter.a1 - y[1]*state->Filter.a2;
-            x[1] = x[0]; x[0] = in;
-            y[1] = y[0]; y[0] = out;
+            out = in*state->Filter.b0 + z1;
+            z1 = in*state->Filter.b1 - out*state->Filter.a1 + z2;
+            z2 = in*state->Filter.b2 - out*state->Filter.a2;
 
             delaybuf[offset&mask] += out * state->FeedGain;
             offset++;
@@ -197,20 +194,18 @@ static ALvoid ALechoState_process(ALechoState *state, ALsizei SamplesToDo, const
 
         base += td;
     }
-    state->Filter.x[0] = x[0];
-    state->Filter.x[1] = x[1];
-    state->Filter.y[0] = y[0];
-    state->Filter.y[1] = y[1];
+    state->Filter.z1 = z1;
+    state->Filter.z2 = z2;
 
     state->Offset = offset;
 }
 
 
-typedef struct ALechoStateFactory {
-    DERIVE_FROM_TYPE(ALeffectStateFactory);
-} ALechoStateFactory;
+typedef struct EchoStateFactory {
+    DERIVE_FROM_TYPE(EffectStateFactory);
+} EchoStateFactory;
 
-ALeffectState *ALechoStateFactory_create(ALechoStateFactory *UNUSED(factory))
+ALeffectState *EchoStateFactory_create(EchoStateFactory *UNUSED(factory))
 {
     ALechoState *state;
 
@@ -220,13 +215,13 @@ ALeffectState *ALechoStateFactory_create(ALechoStateFactory *UNUSED(factory))
     return STATIC_CAST(ALeffectState, state);
 }
 
-DEFINE_ALEFFECTSTATEFACTORY_VTABLE(ALechoStateFactory);
+DEFINE_EFFECTSTATEFACTORY_VTABLE(EchoStateFactory);
 
-ALeffectStateFactory *ALechoStateFactory_getFactory(void)
+EffectStateFactory *EchoStateFactory_getFactory(void)
 {
-    static ALechoStateFactory EchoFactory = { { GET_VTABLE2(ALechoStateFactory, ALeffectStateFactory) } };
+    static EchoStateFactory EchoFactory = { { GET_VTABLE2(EchoStateFactory, EffectStateFactory) } };
 
-    return STATIC_CAST(ALeffectStateFactory, &EchoFactory);
+    return STATIC_CAST(EffectStateFactory, &EchoFactory);
 }
 
 

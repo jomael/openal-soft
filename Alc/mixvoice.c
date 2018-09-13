@@ -39,7 +39,7 @@
 #include "ringbuffer.h"
 
 #include "cpu_caps.h"
-#include "mixer_defs.h"
+#include "mixer/defs.h"
 
 
 static_assert((INT_MAX>>FRACTIONBITS)/MAX_PITCH > BUFFERSIZE,
@@ -203,8 +203,8 @@ static void SendAsyncEvent(ALCcontext *context, ALuint enumtype, ALenum type,
     evt.ObjectId = objid;
     evt.Param = param;
     strcpy(evt.Message, msg);
-    if(ll_ringbuffer_write_space(context->AsyncEvents) > 0)
-        ll_ringbuffer_write(context->AsyncEvents, (const char*)&evt, 1);
+    if(ll_ringbuffer_write(context->AsyncEvents, (const char*)&evt, 1) == 1)
+        alsem_post(&context->EventSem);
 }
 
 
@@ -263,7 +263,7 @@ static void LoadSamples(ALfloat *restrict dst, const ALvoid *restrict src, ALint
 }
 
 
-static const ALfloat *DoFilters(ALfilterState *lpfilter, ALfilterState *hpfilter,
+static const ALfloat *DoFilters(BiquadFilter *lpfilter, BiquadFilter *hpfilter,
                                 ALfloat *restrict dst, const ALfloat *restrict src,
                                 ALsizei numsamples, enum ActiveFilters type)
 {
@@ -271,17 +271,17 @@ static const ALfloat *DoFilters(ALfilterState *lpfilter, ALfilterState *hpfilter
     switch(type)
     {
         case AF_None:
-            ALfilterState_processPassthru(lpfilter, src, numsamples);
-            ALfilterState_processPassthru(hpfilter, src, numsamples);
+            BiquadFilter_passthru(lpfilter, numsamples);
+            BiquadFilter_passthru(hpfilter, numsamples);
             break;
 
         case AF_LowPass:
-            ALfilterState_process(lpfilter, dst, src, numsamples);
-            ALfilterState_processPassthru(hpfilter, dst, numsamples);
+            BiquadFilter_process(lpfilter, dst, src, numsamples);
+            BiquadFilter_passthru(hpfilter, numsamples);
             return dst;
         case AF_HighPass:
-            ALfilterState_processPassthru(lpfilter, src, numsamples);
-            ALfilterState_process(hpfilter, dst, src, numsamples);
+            BiquadFilter_passthru(lpfilter, numsamples);
+            BiquadFilter_process(hpfilter, dst, src, numsamples);
             return dst;
 
         case AF_BandPass:
@@ -290,8 +290,8 @@ static const ALfloat *DoFilters(ALfilterState *lpfilter, ALfilterState *hpfilter
                 ALfloat temp[256];
                 ALsizei todo = mini(256, numsamples-i);
 
-                ALfilterState_process(lpfilter, temp, src+i, todo);
-                ALfilterState_process(hpfilter, dst+i, temp, todo);
+                BiquadFilter_process(lpfilter, temp, src+i, todo);
+                BiquadFilter_process(hpfilter, dst+i, temp, todo);
                 i += todo;
             }
             return dst;
@@ -487,14 +487,12 @@ ALboolean MixSource(ALvoice *voice, ALuint SourceID, ALCcontext *Context, ALsize
                 while(tmpiter && SrcBufferSize > FilledAmt)
                 {
                     ALsizei SizeToDo = SrcBufferSize - FilledAmt;
-                    ALsizei CompLen = 0;
                     ALsizei i;
 
                     for(i = 0;i < tmpiter->num_buffers;i++)
                     {
                         const ALbuffer *ALBuffer = tmpiter->buffers[i];
                         ALsizei DataSize = ALBuffer ? ALBuffer->SampleLen : 0;
-                        CompLen = maxi(CompLen, DataSize);
 
                         if(DataSize > pos)
                         {
@@ -506,11 +504,11 @@ ALboolean MixSource(ALvoice *voice, ALuint SourceID, ALCcontext *Context, ALsize
                                         ALBuffer->FmtType, DataSize);
                         }
                     }
-                    if(pos > CompLen)
-                        pos -= CompLen;
+                    if(pos > tmpiter->max_samples)
+                        pos -= tmpiter->max_samples;
                     else
                     {
-                        FilledAmt += CompLen - pos;
+                        FilledAmt += tmpiter->max_samples - pos;
                         pos = 0;
                     }
                     if(SrcBufferSize > FilledAmt)
@@ -564,8 +562,8 @@ ALboolean MixSource(ALvoice *voice, ALuint SourceID, ALCcontext *Context, ALsize
 #define APPLY_NFC_MIX(order)                                                  \
     if(voice->Direct.ChannelsPerOrder[order] > 0)                             \
     {                                                                         \
-        NfcFilterUpdate##order(&parms->NFCtrlFilter[order-1], nfcsamples,     \
-                               samples, DstBufferSize);                       \
+        NfcFilterProcess##order(&parms->NFCtrlFilter, nfcsamples, samples,    \
+                               DstBufferSize);                                \
         MixSamples(nfcsamples, voice->Direct.ChannelsPerOrder[order],         \
             voice->Direct.Buffer+chanoffset, parms->Gains.Current+chanoffset, \
             parms->Gains.Target+chanoffset, Counter, OutPos, DstBufferSize    \
@@ -715,16 +713,7 @@ ALboolean MixSource(ALvoice *voice, ALuint SourceID, ALCcontext *Context, ALsize
             else
             {
                 /* Handle non-looping static source */
-                ALsizei CompLen = 0;
-                ALsizei i;
-
-                for(i = 0;i < BufferListItem->num_buffers;i++)
-                {
-                    const ALbuffer *buffer = BufferListItem->buffers[i];
-                    if(buffer) CompLen = maxi(CompLen, buffer->SampleLen);
-                }
-
-                if(DataPosInt >= CompLen)
+                if(DataPosInt >= BufferListItem->max_samples)
                 {
                     isplaying = false;
                     BufferListItem = NULL;
@@ -737,19 +726,10 @@ ALboolean MixSource(ALvoice *voice, ALuint SourceID, ALCcontext *Context, ALsize
         else while(1)
         {
             /* Handle streaming source */
-            ALsizei CompLen = 0;
-            ALsizei i;
-
-            for(i = 0;i < BufferListItem->num_buffers;i++)
-            {
-                const ALbuffer *buffer = BufferListItem->buffers[i];
-                if(buffer) CompLen = maxi(CompLen, buffer->SampleLen);
-            }
-
-            if(CompLen > DataPosInt)
+            if(BufferListItem->max_samples > DataPosInt)
                 break;
 
-            buffers_done++;
+            buffers_done += BufferListItem->num_buffers;
             BufferListItem = ATOMIC_LOAD(&BufferListItem->next, almemory_order_acquire);
             if(!BufferListItem && !(BufferListItem=BufferLoopItem))
             {
@@ -759,7 +739,7 @@ ALboolean MixSource(ALvoice *voice, ALuint SourceID, ALCcontext *Context, ALsize
                 break;
             }
 
-            DataPosInt -= CompLen;
+            DataPosInt -= BufferListItem->max_samples;
         }
     } while(isplaying && OutPos < SamplesToDo);
 
@@ -773,14 +753,9 @@ ALboolean MixSource(ALvoice *voice, ALuint SourceID, ALCcontext *Context, ALsize
     /* Send any events now, after the position/buffer info was updated. */
     enabledevt = ATOMIC_LOAD(&Context->EnabledEvts, almemory_order_acquire);
     if(buffers_done > 0 && (enabledevt&EventType_BufferCompleted))
-    {
-        do {
-            SendAsyncEvent(Context, EventType_BufferCompleted,
-                AL_EVENT_TYPE_BUFFER_COMPLETED_SOFT, SourceID, 0, "Buffer completed"
-            );
-        } while(--buffers_done > 0);
-        alsem_post(&Context->EventSem);
-    }
+        SendAsyncEvent(Context, EventType_BufferCompleted,
+            AL_EVENT_TYPE_BUFFER_COMPLETED_SOFT, SourceID, buffers_done, "Buffer completed"
+        );
 
     return isplaying;
 }
